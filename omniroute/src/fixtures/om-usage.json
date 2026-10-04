@@ -1,0 +1,28 @@
+{
+  "providers": [
+    {
+      "connectionId": "example-codex-team",
+      "provider": "codex",
+      "plan": "team",
+      "quotas": {
+        "session": { "used": 16, "total": 100, "remaining": 84, "resetAt": "2030-01-01T00:00:00.000Z", "unlimited": false, "windowSeconds": 18000 },
+        "weekly": { "used": 24, "total": 100, "remaining": 76, "resetAt": "2030-01-07T00:00:00.000Z", "unlimited": false, "windowSeconds": 604800 }
+      }
+    },
+    {
+      "connectionId": "example-codex-plus",
+      "provider": "codex",
+      "plan": "plus",
+      "quotas": { "session": { "remainingPercentage": 90, "unlimited": false } }
+    },
+    {
+      "connectionId": "example-copilot",
+      "provider": "github-copilot",
+      "quotas": {
+        "premium_interactions": { "used": 10, "total": 100, "remaining": 90, "remainingPercentage": 90, "resetAt": "2030-01-01T00:00:00.000Z", "unlimited": false },
+        "chat": { "unlimited": true },
+        "completions": { "unlimited": true }
+      }
+    }
+  ]
+}

@@ -16,6 +16,8 @@ type ConnectionMessage = {
 
 @action({ UUID: "de.lars-brandt.omniroute.connection-settings" })
 export class ConnectionSettingsAction extends SingletonAction {
+	constructor(private readonly onSaved?: (settings: ConnectionSettings) => void) { super(); }
+
 	override async onSendToPlugin(ev: SendToPluginEvent<ConnectionMessage, ConnectionSettings>): Promise<void> {
 		const message = ev.payload;
 		if (message.event === "loadConnectionSettings") {
@@ -30,6 +32,7 @@ export class ConnectionSettingsAction extends SingletonAction {
 				apiKey: typeof message.settings?.apiKey === "string" ? message.settings.apiKey : "",
 			};
 			await streamDeck.settings.setGlobalSettings(settings);
+			this.onSaved?.(settings);
 			await streamDeck.ui.sendToPropertyInspector({ event: "connectionSettingsSaved", settings });
 		}
 	}
