@@ -4,17 +4,16 @@
 	"Author": "Lars Brandt",
 	"Actions": [
 		{
-			"Name": "Counter",
-			"UUID": "de.lars-brandt.omniroute.increment",
-			"Icon": "imgs/actions/counter/icon",
-			"Tooltip": "Displays a count, which increments by one on press.",
-			"PropertyInspectorPath": "ui/increment-counter.html",
+			"Name": "Quota",
+			"UUID": "de.lars-brandt.omniroute.quota",
+			"Icon": "imgs/actions/quota/icon",
+			"Tooltip": "Quota placeholder",
 			"Controllers": [
 				"Keypad"
 			],
 			"States": [
 				{
-					"Image": "imgs/actions/counter/key",
+					"Image": "imgs/actions/quota/key",
 					"TitleAlignment": "middle"
 				}
 			]
