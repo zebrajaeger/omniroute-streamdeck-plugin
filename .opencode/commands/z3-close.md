@@ -1,9 +1,9 @@
 ---
-description: close openspec change
+description: close OpenSpec change
 ---
 
 ## Finde Change-ID
-- Führe `openscpec list` aus.
+- Führe `openscpec list --json` aus.
 - Wurde ein Parameter übergeben?
   - Gibt es in der Liste eine ID, die genau dem Parameter entspricht oder so ähnlich ist, 
     dass es sich mit hoher Wahrscheinlichkeit nur um einen Tippfehler handelt?
