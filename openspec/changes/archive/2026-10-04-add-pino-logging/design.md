@@ -18,7 +18,7 @@ Siehe `proposal.md` für die Motivation und `specs/plugin-logging/spec.md` für 
 
 ## Decisions
 
-1. **Pino als Runtime-Abhängigkeit und gebündelten Logger verwenden.** Das Plugin läuft in einer Node-Umgebung und Rollup baut den TypeScript-Einstiegspunkt samt aufgelösten Runtime-Abhängigkeiten in die Plugin-Binärdatei. Pino gehört daher in `dependencies` und muss in einem Build-Artefakt verfügbar sein. Vor Umsetzung ist zu bestätigen, dass die vom installierten Pino-Release verwendeten Node-APIs und `pino`-Einstiegspunkte von der bestehenden Rollup-Auflösung unterstützt werden. Alternative: Pino extern lassen; dies wird vermieden, weil das Manifest keinen Installations- oder Liefermechanismus für npm-Pakete zur Laufzeit beschreibt.
+1. **Pino und seine Produktionsabhängigkeiten extern im installierbaren Plugin mitliefern.** Pino verwendet `thread-stream` für seine Worker-Transport-Infrastruktur, die von der aktuellen Rollup-Konfiguration nicht als JSON-/Worker-Modul gebündelt werden kann. Rollup soll Pino und dessen Runtime-Abhängigkeiten deshalb externalisieren; ein Packaging-Schritt muss die benötigten Produktionsmodule samt ihrer Abhängigkeitsstruktur in das Stream-Deck-Plugin-Verzeichnis kopieren, sodass Node.js 24 sie beim Start auflösen kann. Ein bloßes Externalisieren ohne Packaging ist unvollständig. Alternative: `@rollup/plugin-json` und weitere Worker-/Node-Sonderbehandlung in das Bundle einbauen; das erhöht Komplexität und löst die Dateipfad-/Worker-Auflösung nicht zuverlässig.
 
 2. **Einen Logger zentral an einer Plugin-internen Schnittstelle initialisieren.** Der Einstiegspunkt konfiguriert die Instanz einmal; Plugin-Module importieren die zentrale Instanz, anstatt Logger unabhängig mit unterschiedlichen Optionen zu erzeugen. Die Implementierung liest `OMNIROUTE_LOG_LEVEL` und validiert den Wert gegen unterstützte Pino-Level. Die Variable und ihre gültigen Werte werden in knapper Entwicklerdokumentation festgehalten. Alternative: nur einen fest codierten Level anbieten; die Konfiguration bleibt bevorzugt, weil sie Diagnose in verschiedenen Umgebungen erlaubt, ohne Änderungen am Code zu benötigen.
 
@@ -40,6 +40,6 @@ Siehe `proposal.md` für die Motivation und `specs/plugin-logging/spec.md` für 
 ## Migration Plan
 
 1. Pino samt zentraler Initialisierung, validiertem Level und Redaction konfigurieren; den bisherigen expliziten SDK-Trace-Level sicher anpassen.
-2. Build ausführen und sicherstellen, dass die gebündelte Plugin-Datei Pino ohne zur Laufzeit fehlende Module enthält.
-3. Plugin mit Stream Deck Developer Tools starten und prüfen, dass Logs auf der Prozessausgabe erscheinen und sensible Testwerte redigiert werden.
-4. Rollback: zentrale Pino-Aufrufe und Runtime-Abhängigkeit zurücknehmen und die SDK-Logging-Einstellung getrennt wieder auf den zuvor verwendeten Wert setzen, falls die Laufzeitintegration Probleme verursacht. Trace darf nicht als beiläufiger Rollback wieder zum unkritischen Standard werden.
+2. Produktionsabhängigkeiten in das Plugin-Paket kopieren und sicherstellen, dass Node.js 24 Pino von der gebündelten Einstiegspunktdatei aus auflösen kann.
+3. Build und Packaging ausführen und das erzeugte installierbare Plugin starten; strukturierte stdout-Logs und Redaction verifizieren.
+4. Rollback: zentrale Pino-Aufrufe und Runtime-Abhängigkeit sowie den Packaging-Schritt zurücknehmen und die SDK-Logging-Einstellung getrennt auf einen sicheren Level setzen. Trace darf nicht als beiläufiger Rollback wieder zum unkritischen Standard werden.

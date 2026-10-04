@@ -7,12 +7,14 @@ import url from "node:url";
 
 const isWatching = !!process.env.ROLLUP_WATCH;
 const sdPlugin = "de.lars-brandt.omniroute.sdPlugin";
+const externalRuntimeModules = ["pino", "thread-stream", "real-require"];
 
 /**
  * @type {import('rollup').RollupOptions}
  */
 const config = {
 	input: "src/plugin.ts",
+	external: (id) => externalRuntimeModules.some((moduleName) => id === moduleName || id.startsWith(`${moduleName}/`)),
 	output: {
 		file: `${sdPlugin}/bin/plugin.js`,
 		sourcemap: isWatching,
