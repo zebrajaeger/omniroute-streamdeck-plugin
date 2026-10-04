@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+	<title>OmniRoute Quota</title>
+	<meta charset="utf-8" />
+	<script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+	<style>
+		dialog {
+			box-sizing: border-box;
+			width: calc(100% - 24px);
+			max-width: 480px;
+			padding: 16px 8px;
+			color: inherit;
+			background: #2d2d2d;
+			border: 1px solid #555;
+			border-radius: 6px;
+		}
+
+		dialog::backdrop {
+			background: rgb(0 0 0 / 65%);
+		}
+
+		.connection-icon {
+			width: 20px;
+			height: 20px;
+			vertical-align: middle;
+		}
+	</style>
+	<script>
+		const { streamDeckClient } = SDPIComponents;
+
+		function setFields(settings = {}) {
+			document.querySelector('[data-field="url"]').value = typeof settings.url === "string" ? settings.url : "";
+			document.querySelector('[data-field="apiKey"]').value = typeof settings.apiKey === "string" ? settings.apiKey : "";
+		}
+
+		async function openConnectionSettings() {
+			const settings = await streamDeckClient.getGlobalSettings();
+			setFields(settings);
+			document.querySelector("#connection-dialog").showModal();
+		}
+
+		function cancelConnectionSettings() {
+			document.querySelector("#connection-dialog").close();
+		}
+
+		async function saveConnectionSettings() {
+			const settings = {
+				url: document.querySelector('[data-field="url"]').value,
+				apiKey: document.querySelector('[data-field="apiKey"]').value,
+			};
+			await streamDeckClient.setGlobalSettings(settings);
+			document.querySelector("#connection-dialog").close();
+		}
+	</script>
+</head>
+
+<body>
+	<sdpi-item label="Connection">
+		<sdpi-button onclick="openConnectionSettings()" title="Connection settings" aria-label="Connection settings">
+			<img class="connection-icon" src="../imgs/actions/connection.png" alt="" /> Connection settings
+		</sdpi-button>
+	</sdpi-item>
+
+	<dialog id="connection-dialog" aria-label="OmniRoute connection settings">
+		<sdpi-item label="OmniRoute URL">
+			<sdpi-textfield data-field="url" placeholder="http://localhost:20128"></sdpi-textfield>
+		</sdpi-item>
+		<sdpi-item label="API Key">
+			<sdpi-textfield data-field="apiKey"></sdpi-textfield>
+		</sdpi-item>
+		<sdpi-item>
+			<sdpi-button onclick="cancelConnectionSettings()">Cancel</sdpi-button>
+			<sdpi-button onclick="saveConnectionSettings()">Save</sdpi-button>
+		</sdpi-item>
+	</dialog>
+</body>
+
+</html>

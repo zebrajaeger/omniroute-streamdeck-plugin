@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+
+<head lang="en">
+	<title>OmniRoute Connection Settings</title>
+	<meta charset="utf-8" />
+	<script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+	<script>
+		const { streamDeckClient } = SDPIComponents;
+		let savedSettings = { url: "", apiKey: "" };
+
+		async function loadSettings() {
+			savedSettings = await streamDeckClient.getGlobalSettings();
+			setFields(savedSettings);
+		}
+
+		async function saveSettings() {
+			savedSettings = {
+				url: document.querySelector('[data-field="url"]').value,
+				apiKey: document.querySelector('[data-field="apiKey"]').value,
+			};
+			await streamDeckClient.setGlobalSettings(savedSettings);
+		}
+
+		function cancelSettings() {
+			setFields(savedSettings);
+		}
+
+		function setFields(settings = {}) {
+			document.querySelector('[data-field="url"]').value = settings.url ?? "";
+			document.querySelector('[data-field="apiKey"]').value = settings.apiKey ?? "";
+		}
+
+		window.addEventListener("load", loadSettings);
+	</script>
+</head>
+
+<body>
+	<sdpi-item label="OmniRoute URL">
+		<sdpi-textfield data-field="url" placeholder="http://localhost:20128"></sdpi-textfield>
+	</sdpi-item>
+	<sdpi-item label="API Key">
+		<sdpi-textfield data-field="apiKey"></sdpi-textfield>
+	</sdpi-item>
+	<sdpi-item>
+		<sdpi-button onclick="cancelSettings()">Cancel</sdpi-button>
+		<sdpi-button onclick="saveSettings()">Save</sdpi-button>
+	</sdpi-item>
+</body>
+
+</html>

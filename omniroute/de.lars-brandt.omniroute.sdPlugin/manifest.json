@@ -8,12 +8,29 @@
 			"UUID": "de.lars-brandt.omniroute.quota",
 			"Icon": "imgs/actions/quota/icon",
 			"Tooltip": "Quota placeholder",
+			"PropertyInspectorPath": "ui/quota.html",
 			"Controllers": [
 				"Keypad"
 			],
 			"States": [
 				{
 					"Image": "imgs/actions/quota/key",
+					"TitleAlignment": "middle"
+				}
+			]
+		},
+		{
+			"Name": "OmniRoute Connection Settings",
+			"UUID": "de.lars-brandt.omniroute.connection-settings",
+			"Icon": "imgs/actions/connection",
+			"Tooltip": "Configure OmniRoute connection settings",
+			"PropertyInspectorPath": "ui/connection-settings.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/actions/connection",
 					"TitleAlignment": "middle"
 				}
 			]
