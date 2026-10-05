@@ -1,6 +1,10 @@
 ---
 description: close OpenSpec change
 ---
+# Close: Sync, Archive, Commit
+## Allgemeine Hinweise
+- Auch Bestätigungen immer als Frage formulieren, die eine Auswahl verlangt. Z.B.: Ja/Nein.
+ Der Grund ist, dass der Agent dann in den Fragemodus kommt und es nicht so aussieht, als wäre alles erledigt. 
 
 ## Finde Change-ID
 - Führe `openscpec list --json` aus.
