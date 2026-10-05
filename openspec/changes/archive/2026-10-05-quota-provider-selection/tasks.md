@@ -1,0 +1,28 @@
+## 1. Voraussetzungen und Discovery
+
+- [x] 1.1 Implementierten und verifizierten `central-quota-service` als Voraussetzung bestätigen; vor bestehenden Symboländerungen GitNexus-Impact für QuotaAction und Client ausführen und Risiko einschließlich UNKNOWN dokumentieren.
+  - `central-quota-service` ist implementiert (Client, Service, Bootstrap); `npm test` in `omniroute` bestand mit 18/18 Tests. GitNexus-Impact (upstream): `QuotaAction` LOW, direkter Aufrufer `plugin.ts`; `OmniRouteClient` LOW, direkte Abhängigkeiten `quota-service.ts`/`QuotaService.constructor`, indirekt `plugin.ts`/`quota-bootstrap.ts`; keine betroffenen erfassten Prozesse. Beide Ergebnisse sind `exact`, keines `UNKNOWN`. SDK-Lifecycle und dynamische Property-Inspector-Nachrichten sind dennoch nicht vollständig durch statische Aufrufer abgebildet und bedürfen gesonderter Tests.
+- [x] 1.2 Ausschließlich die äußere Collection-Struktur von `/api/usage/quota` und die belegten Felder `connectionId`/`provider`/`name` mit bereinigter Live-Fixture bestätigen; Fixture ohne Token und echte Accountdaten speichern und den Extraktor-Test gegen diese Struktur bestehen lassen.
+  - Live-Antwort: Objekt mit `providers`-Array und `meta`-Objekt; Provider-Einträge enthalten `connectionId`, `provider` und `name`. Nur anonymisierte Struktur in `src/fixtures/quota-discovery.json` gespeichert; Extraktor-Fixture-Test bestanden.
+- [x] 1.3 Client-Discovery und `src/provider-registry.ts` ergänzen; Tests für gleiche Provider/verschiedene IDs, leere Collection, fehlende Namen, ungültige/duplizierte IDs und erlaubte Metadaten bestehen lassen.
+- [x] 1.4 Single-flight, Timeout, Fehlerkategorien und Konfigurationsinvalidierung für Discovery implementieren; Tests bestätigen einen Request bei parallelem Laden sowie verworfene Late Results nach Settings-Wechsel.
+
+## 2. Property Inspector und Persistenz
+
+- [x] 2.1 Bereinigte `loadProviderConnections`-/`providerConnectionsLoaded`-Nachrichten in QuotaAction ergänzen; Tests bestätigen Request-ID-Korrelation, Kontextisolation und keine Credentials oder rohe API-Antwort im Payload.
+- [x] 2.2 Provider-Auswahl und Reload mit `sdpi-select`/`sdpi-button` in `ui/quota.html` ergänzen; DOM-/Inspector-Prüfung bestätigt eindeutige Optionen mit `connectionId` als Wert, sichere Textlabels und unveränderten Verbindungsmodal.
+  - Im geöffneten Stream-Deck-Inspector über Developer Tools bestätigt: zwei getrennte Codex-Optionen mit verschiedenen IDs, Auswahl wird als Action-Setting gespeichert, Reload behält die Auswahl und zeigt weiterhin vier Optionen inklusive leerer Auswahl. Verbindungsdialog öffnet mit ausgefüllten Feldern, Cancel schließt ohne Änderung; Save mit unveränderten Feldern bewahrt die Settings. Zusätzlich DOM-Test für sichere Textlabels ohne HTML-Injektion.
+- [x] 2.3 Action-Settings lesen, mergen, explizit wählen und leeren; Tests bestätigen Wiederherstellung, unabhängige IDs zweier Tasten, Erhalt anderer Settings und keine automatische Erstwahl oder Kopie globaler Zugangsdaten.
+- [x] 2.4 Loading, Fehler, Empty und gespeicherte fehlende ID darstellen und offene Inspector-Daten nach globalem Wechsel erneuern; Zustands-/DOM-Tests bestätigen erhaltene Zuordnung sowie ignorierte alte Antworten nach Navigation.
+  - DOM-/Zustandstests prüfen Loading, Empty, Authentication, fehlende ID, globales Reload, Kontext- und Request-ID-Isolation. Die tatsächliche Darstellung im Stream Deck Inspector bleibt Teil der manuellen Prüfung 2.2/3.2.
+
+## 3. Gesamtverifikation
+
+- [x] 3.1 In `omniroute` `npm test`, `npx tsc --noEmit` und `npm run build` erfolgreich ausführen; prüfen, dass Tasten weiterhin keine Quota-Werte darstellen.
+  - 28/28 Tests, Typecheck und Build erfolgreich; `streamdeck validate` erfolgreich. `QuotaAction` ändert keine Tastengrafik und zeigt keine Quota-Werte.
+- [x] 3.2 Mit geöffneten Developer Tools und `npm run watch` zwei Accounts desselben Providers auf zwei Tasten auswählen, Inspector neu öffnen und Plugin neu starten; persistente unabhängige Zuordnung und unverändertes Save/Cancel im Verbindungsdialog verifizieren.
+  - Mit laufendem Watch und geöffnetem echten Inspector zwei Codex-Accounts nacheinander auf zwei Quota-Tasten (Positionen 1,2 und 0,2) ausgewählt. Beide Action-Settings enthielten danach unterschiedliche `connectionId`-Werte und keine globalen Zugangsdaten. Nach Plugin-Neustart und erneutem Öffnen beider Inspectors blieb die jeweilige Auswahl erhalten. Dialog öffnete mit gespeicherten Feldern; Cancel bewahrte globale Settings und Save mit unveränderten Feldern schloss ohne Inhaltsänderung.
+- [x] 3.3 Empty-, 401- und fehlende-Connection-Zustände mit kontrollierten Testantworten prüfen; erhaltene IDs und verständliche Inspector-Hinweise dokumentieren, ohne reale OmniRoute-Accounts zu löschen.
+  - Kontrollierte Antworten in Client-/Registry-/DOM-Tests: leere Collection ergibt `empty` und "No provider connections are available."; HTTP 401 ergibt `authentication` und "Authentication failed. Check the OmniRoute API key."; nicht gefundene gespeicherte ID bleibt ausgewählt und zeigt "Saved connection <ID> is unavailable. Select another or clear it.". Kein echter Account wurde gelöscht oder verändert.
+- [x] 3.4 Vor späterem Abschluss von `quota-key-display` die Reihenfolge des Platzhalter-Spec-Sync festhalten; bestätigen, dass dieses MODIFIED-Delta zuerst synchronisiert wird und kein Commit, Push oder Archive ohne Nutzerauftrag erfolgt.
+  - Reihenfolge: zuerst das MODIFIED-Delta von `quota-provider-selection` für `quota-placeholder` synchronisieren/archivieren, erst danach `quota-key-display` abschließen. Weder Commit noch Push noch Archive ohne Nutzerauftrag; die Haupt-Spec wird hier nicht vorzeitig synchronisiert.

@@ -1,0 +1,8 @@
+{
+  "providers": [
+    { "connectionId": "example-codex-one", "provider": "codex", "name": "Example account one", "tokenStatus": "active", "quotaUsed": 12 },
+    { "connectionId": "example-codex-two", "provider": "codex", "name": "Example account two", "percentRemaining": 80 },
+    { "connectionId": "example-other", "provider": "other", "name": null }
+  ],
+  "meta": { "generatedAt": "2030-01-01T00:00:00Z", "totalProviders": 3 }
+}

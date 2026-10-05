@@ -57,6 +57,11 @@
 </head>
 
 <body>
+	<sdpi-item label="Provider connection">
+		<sdpi-select id="provider-connection"></sdpi-select>
+		<sdpi-button id="reload-providers" title="Reload provider connections">Reload</sdpi-button>
+	</sdpi-item>
+	<sdpi-item><span id="provider-status" role="status">Loading provider connections…</span></sdpi-item>
 	<sdpi-item label="Connection">
 		<sdpi-button onclick="openConnectionSettings()" title="Connection settings" aria-label="Connection settings">
 			<img class="connection-icon" src="../imgs/actions/connection.png" alt="" /> Connection settings
@@ -75,6 +80,7 @@
 			<sdpi-button onclick="saveConnectionSettings()">Save</sdpi-button>
 		</sdpi-item>
 	</dialog>
+	<script src="provider-selector.js"></script>
 </body>
 
 </html>

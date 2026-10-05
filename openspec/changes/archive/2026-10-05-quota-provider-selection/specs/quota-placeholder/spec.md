@@ -1,17 +1,4 @@
-# quota-placeholder Specification
-
-## Purpose
-
-Provides a visible, placeable Quota key in the Stream Deck while the actual quota display functionality has not yet been implemented.
-
-## Requirements
-
-### Requirement: User can place a Quota action on a key
-The plugin SHALL expose a keypad action named “Quota” in the Stream Deck actions list, and users SHALL be able to place it on a key.
-
-#### Scenario: Find and place the Quota action
-- **WHEN** a user views the OmniRoute actions in Stream Deck and drags “Quota” onto a key
-- **THEN** the key is assigned the Quota action and the action appears on that key
+## MODIFIED Requirements
 
 ### Requirement: Quota action is an inert placeholder
 The Quota action SHALL remain a display placeholder and SHALL NOT display quota data or increment a counter. It SHALL allow an optional action-specific `connectionId` assignment through its Property Inspector without requiring an assignment to place the action on a key.
