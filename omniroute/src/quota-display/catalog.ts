@@ -1,11 +1,12 @@
 import type { QuotaRenderModel } from "./model";
 import { textSvg } from "./text";
 import { doubleRingSvg } from "./double-ring";
+import type { ColorScheme } from "./color-schemes";
 
 export interface Presentation {
 	readonly id: string;
 	readonly label: string;
-	readonly render: (model: QuotaRenderModel) => string;
+	readonly render: (model: QuotaRenderModel, scheme?: ColorScheme) => string;
 }
 
 export const presentations: readonly Presentation[] = [

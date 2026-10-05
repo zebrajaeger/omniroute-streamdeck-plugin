@@ -5,6 +5,7 @@ import { ProviderRegistry } from "../provider-registry";
 import { mergeConnectionId } from "../provider-selection";
 import { quotaImage } from "../quota-renderer";
 import { presentationOptions } from "../quota-display/catalog";
+import { colorSchemeOptions } from "../quota-display/color-schemes";
 import { normalizeDisplayName } from "../quota-display/model";
 import type { QuotaService } from "../quota-service";
 
@@ -17,9 +18,10 @@ interface VisibleKey {
 	writing: boolean;
 }
 
-type DiscoveryMessage = { event: "loadProviderConnections" | "loadPresentations"; requestId: string } |
+type DiscoveryMessage = { event: "loadProviderConnections" | "loadPresentations" | "loadColorSchemes"; requestId: string } |
 	{ event: "selectProviderConnection"; connectionId: string } |
 	{ event: "selectPresentation"; presentation: string; requestId?: string } |
+	{ event: "selectColorScheme"; colorScheme: string; requestId?: string } |
 	{ event: "setDisplayName"; displayName: string };
 
 @action({ UUID: "de.lars-brandt.omniroute.quota" })
@@ -58,7 +60,7 @@ export class QuotaAction extends SingletonAction {
 
 	private render(key: VisibleKey): void {
 		if (!this.service) return;
-		const image = quotaImage(this.service.getState(), key.settings.connectionId, key.settings.presentation, key.settings.displayName);
+		const image = quotaImage(this.service.getState(), key.settings.connectionId, key.settings.presentation, key.settings.displayName, key.settings.colorScheme);
 		if (image === key.pending || (!key.writing && image === key.lastImage)) return;
 		key.pending = image;
 		key.revision++;
@@ -127,13 +129,20 @@ export class QuotaAction extends SingletonAction {
 			await streamDeck.ui.sendToPropertyInspector({ event: "presentationsLoaded", requestId: message.requestId, presentations: [...presentationOptions()] });
 			return;
 		}
-		if (message?.event === "selectProviderConnection" || message?.event === "selectPresentation" || message?.event === "setDisplayName") {
+		if (message?.event === "loadColorSchemes") {
+			if (typeof message.requestId !== "string" || !message.requestId) return;
+			await streamDeck.ui.sendToPropertyInspector({ event: "colorSchemesLoaded", requestId: message.requestId, colorSchemes: [...colorSchemeOptions()] });
+			return;
+		}
+		if (message?.event === "selectProviderConnection" || message?.event === "selectPresentation" || message?.event === "selectColorScheme" || message?.event === "setDisplayName") {
 			if (message.event === "selectProviderConnection" && typeof message.connectionId !== "string") return;
 			if (message.event === "selectPresentation" && (typeof message.presentation !== "string" || !presentationOptions().some(item => item.id === message.presentation))) return;
+			if (message.event === "selectColorScheme" && (typeof message.colorScheme !== "string" || !colorSchemeOptions().some(item => item.id === message.colorScheme))) return;
 			if (message.event === "setDisplayName" && typeof message.displayName !== "string") return;
 			const visit = this.activeVisit;
 			const id = ev.action.id;
 			const presentationRequestId = message.event === "selectPresentation" && typeof message.requestId === "string" ? message.requestId : undefined;
+			const schemeRequestId = message.event === "selectColorScheme" && typeof message.requestId === "string" ? message.requestId : undefined;
 			const previous = this.settingWrites.get(id) ?? Promise.resolve();
 			const write = previous.catch(() => {}).then(async () => {
 				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return false;
@@ -142,6 +151,7 @@ export class QuotaAction extends SingletonAction {
 				let next: JsonObject;
 				if (message.event === "selectProviderConnection") next = mergeConnectionId(settings, message.connectionId);
 				else if (message.event === "selectPresentation") next = { ...settings, presentation: message.presentation as string };
+				else if (message.event === "selectColorScheme") next = { ...settings, colorScheme: message.colorScheme as string };
 				else {
 					next = { ...settings };
 					const name = normalizeDisplayName(message.displayName);
@@ -164,12 +174,18 @@ export class QuotaAction extends SingletonAction {
 				if (saved && presentationRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
 					await streamDeck.ui.sendToPropertyInspector({ event: "presentationSaved", requestId: presentationRequestId,
 						presentation: message.event === "selectPresentation" ? message.presentation : "", saved: true });
+				if (saved && schemeRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "colorSchemeSaved", requestId: schemeRequestId,
+						colorScheme: message.event === "selectColorScheme" ? message.colorScheme : "", saved: true });
 			}
 			catch (error) {
 				if (presentationRequestId &&
 					this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
 					await streamDeck.ui.sendToPropertyInspector({ event: "presentationSaved", requestId: presentationRequestId,
 						presentation: message.event === "selectPresentation" ? message.presentation : "", saved: false });
+				else if (schemeRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "colorSchemeSaved", requestId: schemeRequestId,
+						colorScheme: message.event === "selectColorScheme" ? message.colorScheme : "", saved: false });
 				else throw error;
 			} finally { if (this.settingWrites.get(id) === write) this.settingWrites.delete(id); }
 			return;

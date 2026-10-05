@@ -2,6 +2,8 @@ const client = SDPIComponents.streamDeckClient;
 const selector = document.querySelector("#provider-connection");
 const statusElement = document.querySelector("#provider-status");
 const presentationSelector = document.querySelector("#quota-presentation");
+const schemeItem = document.querySelector("#color-scheme-item");
+const schemeSelector = document.querySelector("#quota-color-scheme");
 const nameField = document.querySelector("#quota-display-name");
 let selectedId = "";
 let customName = "";
@@ -10,6 +12,14 @@ let presentationPending;
 let presentationRequestId;
 let confirmedPresentation = "text";
 let presentationRevision = 0;
+let colorScheme = "classic";
+let confirmedColorScheme = "classic";
+let schemePending;
+let schemeRequestId;
+let schemeRevision = 0;
+let schemeCatalog = [];
+let schemeCatalogRequestId;
+let schemeCatalogReady = false;
 let namePending;
 let names = new Map();
 let catalog = [{ id: "text", label: "Text" }];
@@ -68,6 +78,22 @@ function updatePresentation() {
 	presentationSelector.replaceChildren(...catalog.map(item => option(item.id, item.label)));
 	presentationSelector.value = catalog.some(item => item.id === presentation) ? presentation : "text";
 	presentationSelector.disabled = !catalogReady;
+	updateColorScheme();
+}
+
+function updateColorScheme() {
+	schemeItem.hidden = presentation !== "double-ring";
+	schemeSelector.replaceChildren(...schemeCatalog.map(item => option(item.id, item.label)));
+	schemeSelector.value = schemeCatalog.some(item => item.id === colorScheme) ? colorScheme : "classic";
+	schemeSelector.disabled = !schemeCatalogReady || schemeItem.hidden;
+}
+
+function confirmColorScheme(value) {
+	confirmedColorScheme = value;
+	if (schemePending === undefined || schemePending === value) {
+		colorScheme = value;
+		updateColorScheme();
+	}
 }
 
 function confirmPresentation(value) {
@@ -96,6 +122,7 @@ async function restoreSelection() {
 		const saved = typeof result.settings?.presentation === "string" ? result.settings.presentation : "text";
 		confirmPresentation(saved);
 	}
+	if (schemePending === undefined) confirmColorScheme(result.settings?.colorScheme);
 	if (namePending === undefined) customName = typeof result.settings?.displayName === "string" ? result.settings.displayName.trim() : "";
 	updatePresentation();
 	updateName();
@@ -134,6 +161,27 @@ async function selectPresentation(event) {
 }
 presentationSelector.addEventListener("input", selectPresentation);
 presentationSelector.addEventListener("change", selectPresentation);
+async function selectColorScheme(event) {
+	const value = event.composedPath?.().find(item => item?.tagName === "SELECT")?.value ??
+		schemeSelector.shadowRoot?.querySelector("select")?.value ?? schemeSelector.value;
+	if (!schemeCatalogReady || presentation !== "double-ring" || !schemeCatalog.some(item => item.id === value) || value === colorScheme) return;
+	colorScheme = value;
+	schemePending = value;
+	const id = `${++serial}-${Date.now()}`;
+	schemeRequestId = id;
+	const revision = ++schemeRevision;
+	updateColorScheme();
+	try { await client.send("sendToPlugin", { event: "selectColorScheme", colorScheme: value, requestId: id }); }
+	catch {
+		if (schemeRevision === revision) {
+			schemeRequestId = undefined;
+			schemePending = undefined;
+			void restoreSelection();
+		}
+	}
+}
+schemeSelector.addEventListener("input", selectColorScheme);
+schemeSelector.addEventListener("change", selectColorScheme);
 nameField.addEventListener("change", async () => {
 	const value = nameField.value.trim();
 	customName = value;
@@ -152,6 +200,21 @@ client.sendToPropertyInspector.subscribe(message => {
 		catalog = options;
 		catalogReady = true;
 		updatePresentation();
+		return;
+	}
+	if (payload?.event === "colorSchemesLoaded" && payload.requestId === schemeCatalogRequestId && Array.isArray(payload.colorSchemes)) {
+		const options = payload.colorSchemes.filter(item => typeof item?.id === "string" && typeof item.label === "string");
+		if (!options.some(item => item.id === "classic")) return;
+		schemeCatalog = options;
+		schemeCatalogReady = true;
+		updateColorScheme();
+		return;
+	}
+	if (payload?.event === "colorSchemeSaved" && payload.requestId === schemeRequestId) {
+		schemeRequestId = undefined;
+		schemePending = undefined;
+		if (payload.saved) confirmColorScheme(payload.colorScheme);
+		else void restoreSelection();
 		return;
 	}
 	if (payload?.event === "presentationSaved" && payload.requestId === presentationRequestId) {
@@ -183,6 +246,15 @@ client.didReceiveSettings.subscribe(message => {
 	if (!catalogRequestId) {
 		catalogRequestId = `${++serial}-${Date.now()}`;
 		void client.send("sendToPlugin", { event: "loadPresentations", requestId: catalogRequestId });
+	}
+	if (!schemeCatalogRequestId) {
+		schemeCatalogRequestId = `${++serial}-${Date.now()}`;
+		void client.send("sendToPlugin", { event: "loadColorSchemes", requestId: schemeCatalogRequestId });
+	}
+	const nextScheme = settings.colorScheme;
+	if (schemePending === undefined || schemePending === nextScheme) {
+		if (schemePending === nextScheme) schemePending = undefined;
+		confirmColorScheme(nextScheme);
 	}
 	const nextPresentation = typeof settings.presentation === "string" ? settings.presentation : "text";
 	if (presentationPending === undefined || presentationPending === nextPresentation) {

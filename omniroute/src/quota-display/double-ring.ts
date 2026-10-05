@@ -1,7 +1,9 @@
 import type { QuotaRenderModel } from "./model";
+import type { ColorScheme } from "./color-schemes";
+import { resolveColorScheme } from "./color-schemes";
 import { shorten, svg, text } from "./svg";
 
-export function doubleRingSvg(model: QuotaRenderModel): string {
+export function doubleRingSvg(model: QuotaRenderModel, scheme: ColorScheme = resolveColorScheme(undefined)): string {
 	const status = model.message.length || !model.rows.length;
 	// Reserve the bottom strip only when a stale or overflow indicator is needed.
 	const centerY = model.footer ? 32 : 36;
@@ -9,7 +11,7 @@ export function doubleRingSvg(model: QuotaRenderModel): string {
 	const rings = status ? "" : model.rows.map((row, i) => {
 		const radius = outerRadius - (i ? 8 : 0);
 		const circumference = 2 * Math.PI * radius;
-		const color = i ? "#a78bfa" : "#38bdf8";
+		const color = i ? scheme.inner : scheme.outer;
 		const track = `<circle cx="36" cy="${centerY}" r="${radius}" fill="none" stroke="#475569" stroke-width="4"${row.percentage.kind === "unknown" ? ' stroke-dasharray="1 3"' : ""}/>`;
 		if (row.percentage.kind !== "limited") return track + (row.percentage.kind === "unlimited" ? `<circle cx="36" cy="${centerY}" r="${radius}" fill="none" stroke="${color}" stroke-width="1" stroke-dasharray="3 4"/>` : "");
 		if (!row.percentage.value) return track;

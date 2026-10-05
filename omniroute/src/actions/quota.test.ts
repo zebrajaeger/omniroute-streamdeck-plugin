@@ -257,3 +257,66 @@ test("changing one visible presentation redraws from shared state without fetchi
 		else delete (streamDeck.ui as any).action;
 	}
 });
+
+test("color schemes use serialized per-key settings and redraw only the selected visible key", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	const originalSend = streamDeck.ui.sendToPropertyInspector;
+	const state = { status: "ready" as const, stale: false, snapshot: parseSnapshot({ providers: [
+		{ connectionId: "a", provider: "codex", quotas: { session: { remainingPercentage: 84 }, weekly: { remainingPercentage: 76 } } },
+	] }) };
+	let reads = 0;
+	const service = { getState: () => { reads++; return state; }, subscribe: () => () => {} };
+	const makeKey = (id: string, colorScheme?: unknown) => {
+		let saved: any = { connectionId: "a", presentation: "double-ring", displayName: id, untouched: true, colorScheme };
+		const images: string[] = [];
+		return { id, images, isKey: () => true, saved: () => saved, getSettings: async () => saved,
+			setSettings: async (next: any) => { saved = next; }, setTitle: async () => {}, setImage: async (image: string) => { images.push(image); } };
+	};
+	const a = makeKey("a", "unsupported"), b = makeKey("b");
+	const action = new QuotaAction(undefined, service);
+	try {
+		let current: any = a;
+		const replies: any[] = [];
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => current });
+		streamDeck.ui.sendToPropertyInspector = async payload => { replies.push(payload); };
+		action.onWillAppear({ action: a, payload: { settings: a.saved() } } as any);
+		action.onWillAppear({ action: b, payload: { settings: b.saved() } } as any);
+		await new Promise(resolve => setImmediate(resolve));
+		assert.equal(a.images.at(-1), quotaImage(state, "a", "double-ring", "a"));
+		assert.equal(a.saved().colorScheme, "unsupported");
+		const bImages = b.images.length;
+		action.onPropertyInspectorDidAppear({ action: a } as any);
+		const send = (payload: any) => action.onSendToPlugin({ action: a, payload } as any);
+		await send({ event: "loadColorSchemes", requestId: "list" });
+		assert.deepEqual(replies[0].colorSchemes.map((scheme: any) => scheme.id), [
+			"classic", "warm", "vivid", "sunset", "ocean", "forest", "royal", "ember", "orchid", "solar",
+		]);
+		await send({ event: "selectColorScheme", colorScheme: "unknown", requestId: "bad" });
+		assert.equal(a.saved().colorScheme, "unsupported");
+		await Promise.all([
+			send({ event: "selectColorScheme", colorScheme: "warm", requestId: "first" }),
+			send({ event: "selectColorScheme", colorScheme: "vivid", requestId: "second" }),
+		]);
+		await new Promise(resolve => setImmediate(resolve));
+		assert.deepEqual(a.saved(), { connectionId: "a", presentation: "double-ring", displayName: "a", untouched: true, colorScheme: "vivid" });
+		assert.equal(a.images.at(-1), quotaImage(state, "a", "double-ring", "a", "vivid"));
+		assert.equal(b.images.length, bImages);
+		assert.deepEqual(replies.slice(1), [
+			{ event: "colorSchemeSaved", requestId: "first", colorScheme: "warm", saved: true },
+			{ event: "colorSchemeSaved", requestId: "second", colorScheme: "vivid", saved: true },
+		]);
+		assert.equal(reads, 4); // Two initial renders and two palette redraws; no quota fetch.
+		current = b;
+		action.onPropertyInspectorDidAppear({ action: b } as any);
+		await action.onSendToPlugin({ action: b, payload: { event: "selectColorScheme", colorScheme: "warm" } } as any);
+		assert.equal(a.saved().colorScheme, "vivid");
+		assert.equal(b.saved().colorScheme, "warm");
+		await action.onSendToPlugin({ action: b, payload: { event: "selectColorScheme", colorScheme: "solar" } } as any);
+		assert.equal(b.saved().colorScheme, "solar");
+		assert.equal(b.images.at(-1), quotaImage(state, "a", "double-ring", "b", "solar"));
+	} finally {
+		streamDeck.ui.sendToPropertyInspector = originalSend;
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});

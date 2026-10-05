@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { parseSnapshot } from "./quota-model";
 import { quotaImage, quotaRenderModel, quotaSvg } from "./quota-renderer";
 import { presentationOptions, resolvePresentation, presentations } from "./quota-display/catalog";
+import { colorSchemes } from "./quota-display/color-schemes";
 import type { QuotaState, QuotaStatus } from "./quota-service";
 
 const snapshot = parseSnapshot({ providers: [
@@ -139,4 +140,33 @@ test("double ring uses typed fractions and preserves all special/status states",
 	assert.match(unsafe, /&lt;unsafe&gt;/);
 	assert.match(unsafe, /&lt;&amp;/);
 	assert.doesNotMatch(unsafe, /<unsafe>|<script>/);
+});
+
+test("color schemes change only ring accents across numeric and special states", () => {
+	const render = (state: QuotaState, scheme?: unknown, presentation = "double-ring") =>
+		Buffer.from(quotaImage(state, "a", presentation, undefined, scheme).split(",")[1]!, "base64").toString();
+	const standard = render(ready);
+	assert.equal(standard, render(ready, "missing"));
+	assert.equal(standard, render(ready, "classic"));
+	for (const { id, outer, inner } of colorSchemes.slice(1)) {
+		const image = render(ready, id);
+		assert.match(image, new RegExp(`r="32"[^>]+stroke="${outer}"`));
+		assert.match(image, new RegExp(`r="24"[^>]+stroke="${inner}"`));
+		const classic = colorSchemes[0]!;
+		assert.equal(image.replaceAll(outer, classic.outer).replaceAll(inner, classic.inner), standard);
+		assert.equal(render(ready, id, "text"), render(ready, undefined, "text"));
+	}
+	const special: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "P", quotas: {
+		a: { unlimited: true }, b: {},
+	} }] }) };
+	assert.match(render(special, "warm"), /stroke="#fbbf24"[^>]*stroke-dasharray="3 4"/);
+	assert.match(render(special, "warm"), /stroke-dasharray="1 3"/);
+	assert.equal(render(special, "warm").replaceAll("#fbbf24", "#38bdf8"), render(special));
+	for (const state of [{ status: "loading", stale: false }, { status: "unavailable", stale: false }] as QuotaState[]) {
+		assert.equal(render(state, "vivid"), render(state));
+		assert.doesNotMatch(render(state, "vivid"), /<circle/);
+	}
+	const stale: QuotaState = { status: "unavailable", error: "unavailable", stale: true, snapshot };
+	assert.match(render(stale, "vivid"), /Alt Offline/);
+	assert.match(render(stale, "vivid"), /stroke="#a3e635"/);
 });

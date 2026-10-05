@@ -16,6 +16,9 @@ function inspector(saved: Record<string, unknown> = {}, sendImpl?: (payload: any
 	const reload = { addEventListener(event: string, callback: (event: any) => void) { handlers[`reload:${event}`] = callback; } };
 	const presentation = { ...select, children: [] as any[], value: "", shadowRoot: undefined as any,
 		addEventListener(event: string, callback: (event: any) => void) { handlers[`presentation:${event}`] = callback; } };
+	const schemeItem = { hidden: true };
+	const scheme = { ...select, children: [] as any[], value: "", shadowRoot: undefined as any,
+		addEventListener(event: string, callback: (event: any) => void) { handlers[`scheme:${event}`] = callback; } };
 	const name = { value: "", addEventListener(event: string, callback: (event: any) => void) { handlers[`name:${event}`] = callback; } };
 	const status = { textContent: "" };
 	const messages: any[] = [];
@@ -28,11 +31,11 @@ function inspector(saved: Record<string, unknown> = {}, sendImpl?: (payload: any
 		didReceiveSettings: { subscribe: (fn: any) => { listeners.settings = fn; } },
 	};
 	const document = {
-		querySelector: (selector: string) => selector === "#provider-connection" ? select : selector === "#provider-status" ? status : selector === "#quota-presentation" ? presentation : selector === "#quota-display-name" ? name : reload,
+		querySelector: (selector: string) => selector === "#provider-connection" ? select : selector === "#provider-status" ? status : selector === "#quota-presentation" ? presentation : selector === "#color-scheme-item" ? schemeItem : selector === "#quota-color-scheme" ? scheme : selector === "#quota-display-name" ? name : reload,
 		createElement: (_tag: string) => ({ value: "", textContent: "", disabled: false }),
 	};
 	vm.runInNewContext(script, { document, SDPIComponents: { streamDeckClient: client }, Date });
-	return { select, presentation, name, status, messages, listeners, handlers };
+	return { select, presentation, schemeItem, scheme, name, status, messages, listeners, handlers };
 }
 
 async function flush() { await new Promise(resolve => setTimeout(resolve, 0)); }
@@ -282,4 +285,81 @@ test("rapid edits do not let an older acknowledgement undo the latest choice", a
 	assert.equal(view.presentation.value, "double-ring");
 	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: writes[1].requestId, presentation: "double-ring", saved: true } });
 	assert.equal(view.presentation.value, "double-ring");
+});
+
+test("ring schemes appear only in ring view, restore independently and never auto-save unsupported IDs", async () => {
+	assert.match(html, /<sdpi-item id="color-scheme-item"[^>]*><sdpi-select id="quota-color-scheme"/);
+	const options = [{ id: "classic", label: "Classic" }, { id: "warm", label: "Warm" }, { id: "vivid", label: "Vivid" }];
+	for (const [saved, expected] of [[{ presentation: "double-ring", colorScheme: "warm" }, "warm"],
+		[{ presentation: "double-ring", colorScheme: "future" }, "classic"], [{ presentation: "double-ring", colorScheme: 23 }, "classic"],
+		[{ presentation: "double-ring" }, "classic"]] as const) {
+		const view = inspector(saved);
+		await flush();
+		view.listeners.settings({ context: "key-a", payload: { settings: saved } });
+		const schemeRequest = view.messages.find(message => message.event === "loadColorSchemes").requestId;
+		view.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded", requestId: "old", colorSchemes: options } });
+		assert.equal(view.scheme.disabled, true);
+		view.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded", requestId: schemeRequest, colorSchemes: options } });
+		assert.equal(view.schemeItem.hidden, false);
+		assert.equal(view.scheme.value, expected);
+		assert.equal(view.scheme.disabled, false);
+		assert.equal(view.messages.some(message => message.event === "selectColorScheme"), false);
+	}
+	const text = inspector({ presentation: "text", colorScheme: "vivid" });
+	await flush();
+	text.listeners.settings({ context: "key-a", payload: { settings: { presentation: "text", colorScheme: "vivid" } } });
+	text.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded",
+		requestId: text.messages.find(message => message.event === "loadColorSchemes").requestId, colorSchemes: options } });
+	assert.equal(text.schemeItem.hidden, true);
+	assert.equal(text.scheme.disabled, true);
+	assert.equal(text.scheme.value, "vivid");
+	text.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded",
+		requestId: text.messages.find(message => message.event === "loadPresentations").requestId,
+		presentations: [{ id: "text", label: "Text" }, { id: "double-ring", label: "Ring" }] } });
+	text.presentation.value = "double-ring";
+	await text.handlers["presentation:change"]({ target: text.presentation });
+	assert.equal(text.schemeItem.hidden, false);
+	assert.equal(text.scheme.value, "vivid");
+});
+
+test("ring scheme selection reads native value, survives stale replies and rolls back failed writes", async () => {
+	const view = inspector({ presentation: "double-ring", colorScheme: "classic" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { presentation: "double-ring", colorScheme: "classic" } } });
+	view.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded",
+		requestId: view.messages.find(message => message.event === "loadColorSchemes").requestId,
+		colorSchemes: [{ id: "classic", label: "Classic" }, { id: "warm", label: "Warm" }, { id: "vivid", label: "Vivid" }] } });
+	view.scheme.shadowRoot = { querySelector: () => ({ value: "warm" }) };
+	await view.handlers["scheme:input"]({ target: view.scheme });
+	view.scheme.value = "warm";
+	view.handlers["scheme:change"]({ target: view.scheme });
+	assert.deepEqual(view.messages.filter(message => message.event === "selectColorScheme").map(message => message.colorScheme), ["warm"]);
+	view.listeners.settings({ context: "key-a", payload: { settings: { presentation: "double-ring", colorScheme: "classic" } } });
+	assert.equal(view.scheme.value, "warm");
+	view.scheme.shadowRoot = { querySelector: () => ({ value: "vivid" }) };
+	await view.handlers["scheme:input"]({ target: view.scheme });
+	const writes = view.messages.filter(message => message.event === "selectColorScheme");
+	view.listeners.reply({ context: "key-a", payload: { event: "colorSchemeSaved", requestId: writes[0].requestId, colorScheme: "warm", saved: true } });
+	assert.equal(view.scheme.value, "vivid");
+	view.listeners.reply({ context: "key-a", payload: { event: "colorSchemeSaved", requestId: writes[1].requestId, colorScheme: "vivid", saved: true } });
+	assert.equal(view.scheme.value, "vivid");
+	const reopened = inspector({ presentation: "double-ring", colorScheme: "vivid" });
+	await flush();
+	reopened.listeners.settings({ context: "key-a", payload: { settings: { presentation: "double-ring", colorScheme: "vivid" } } });
+	reopened.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded",
+		requestId: reopened.messages.find(message => message.event === "loadColorSchemes").requestId,
+		colorSchemes: [{ id: "classic", label: "Classic" }, { id: "warm", label: "Warm" }, { id: "vivid", label: "Vivid" }] } });
+	assert.equal(reopened.scheme.value, "vivid");
+	const failed = inspector({ presentation: "double-ring", colorScheme: "classic" }, async payload => {
+		if (payload.event === "selectColorScheme") throw new Error("write failed");
+	});
+	await flush();
+	failed.listeners.settings({ context: "key-a", payload: { settings: { presentation: "double-ring", colorScheme: "classic" } } });
+	failed.listeners.reply({ context: "key-a", payload: { event: "colorSchemesLoaded",
+		requestId: failed.messages.find(message => message.event === "loadColorSchemes").requestId,
+		colorSchemes: [{ id: "classic", label: "Classic" }, { id: "warm", label: "Warm" }] } });
+	failed.scheme.value = "warm";
+	await failed.handlers["scheme:input"]({ target: failed.scheme });
+	await flush();
+	assert.equal(failed.scheme.value, "classic");
 });
