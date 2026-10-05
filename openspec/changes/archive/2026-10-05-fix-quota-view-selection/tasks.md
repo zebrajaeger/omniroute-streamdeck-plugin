@@ -12,4 +12,4 @@
 ## 3. Integration prüfen
 
 - [x] 3.1 Im Verzeichnis `omniroute` `npm test` und `npm run build` ausführen; Erfolg der Tests und des Builds prüfen, einschließlich Fallback für fehlende/ungültige Präsentations-IDs.
-- [ ] 3.2 `npm run watch` im Plugin-Verzeichnis sicherstellen und nach automatischem Plugin-Neuladen im Stream Deck die Umschaltung in beide Richtungen, unabhängige zweite Taste und Wiederöffnung des Property Inspectors beobachten; prüfen, dass Auswahl, gespeicherte Einstellung und Tastenbild übereinstimmen.
+- [x] 3.2 `npm run watch` im Plugin-Verzeichnis sicherstellen und nach automatischem Plugin-Neuladen im Stream Deck die Umschaltung in beide Richtungen, unabhängige zweite Taste und Wiederöffnung des Property Inspectors beobachten; prüfen, dass Auswahl, gespeicherte Einstellung und Tastenbild übereinstimmen. Vom Nutzer nach mehrstündigem Einsatz als funktionierend abgenommen; die einzelnen Interaktionen wurden in dieser Sitzung nicht nochmals separat protokolliert.
