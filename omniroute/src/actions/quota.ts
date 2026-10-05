@@ -1,8 +1,19 @@
-import streamDeck, { action, SingletonAction, type SendToPluginEvent, type PropertyInspectorDidAppearEvent, type PropertyInspectorDidDisappearEvent } from "@elgato/streamdeck";
+import streamDeck, { action, SingletonAction, type SendToPluginEvent, type PropertyInspectorDidAppearEvent, type PropertyInspectorDidDisappearEvent, type WillAppearEvent, type WillDisappearEvent, type DidReceiveSettingsEvent, type KeyAction } from "@elgato/streamdeck";
 import type { JsonObject } from "@elgato/utils";
 import { logger } from "../logging";
 import { ProviderRegistry } from "../provider-registry";
 import { mergeConnectionId } from "../provider-selection";
+import { quotaImage } from "../quota-renderer";
+import type { QuotaService } from "../quota-service";
+
+interface VisibleKey {
+	readonly action: KeyAction<JsonObject>;
+	settings: JsonObject;
+	revision: number;
+	lastImage?: string;
+	pending?: string;
+	writing: boolean;
+}
 
 type DiscoveryMessage = { event: "loadProviderConnections"; requestId: string } | { event: "selectProviderConnection"; connectionId: string };
 
@@ -11,10 +22,67 @@ export class QuotaAction extends SingletonAction {
 	private activeContext?: string;
 	private activeVisit = 0;
 	private readonly requests = new Map<string, string>();
-	constructor(private readonly registry: ProviderRegistry = new ProviderRegistry()) { super(); }
+	private readonly visible = new Map<string, VisibleKey>();
+	// Keep the writer alive across a disappear/reappear with the same context ID.
+	private readonly writers = new Map<string, Promise<void>>();
+	constructor(private readonly registry: ProviderRegistry = new ProviderRegistry(),
+		private readonly service?: Pick<QuotaService, "getState" | "subscribe">) {
+		super();
+		service?.subscribe(() => { for (const key of this.visible.values()) this.render(key); });
+	}
 
-	override onWillAppear(): void {
+	override onWillAppear(ev: WillAppearEvent): void {
+		if (!ev.action.isKey()) return;
+		const key: VisibleKey = { action: ev.action, settings: ev.payload.settings, revision: 0, writing: false };
+		this.visible.set(ev.action.id, key);
+		this.render(key);
 		logger.debug("Quota action became visible");
+	}
+
+	override onDidReceiveSettings(ev: DidReceiveSettingsEvent): void {
+		const key = this.visible.get(ev.action.id);
+		if (!key) return;
+		key.settings = ev.payload.settings;
+		this.render(key);
+	}
+
+	override onWillDisappear(ev: WillDisappearEvent): void {
+		this.visible.delete(ev.action.id);
+	}
+
+	private render(key: VisibleKey): void {
+		if (!this.service) return;
+		const image = quotaImage(this.service.getState(), key.settings.connectionId);
+		if (image === key.pending || (!key.writing && image === key.lastImage)) return;
+		key.pending = image;
+		key.revision++;
+		if (key.writing) return;
+		key.writing = true;
+		const id = key.action.id;
+		const previous = this.writers.get(id) ?? Promise.resolve();
+		const write = previous.then(async () => {
+			while (this.visible.get(id) === key && key.pending !== undefined) {
+				const next = key.pending;
+				const revision = key.revision;
+				key.pending = undefined;
+				try {
+					await key.action.setTitle("");
+					if (this.visible.get(id) !== key) break;
+					if (revision !== key.revision) continue;
+					await key.action.setImage(next);
+					key.lastImage = next;
+				} catch {
+					// Do not log SDK errors: they may include settings or server data.
+					logger.warn({ kind: "quota-render" }, "Quota key update failed");
+					if (this.visible.get(id) === key) this.visible.delete(id);
+					break;
+				}
+			}
+		}).finally(() => {
+			key.writing = false;
+			if (this.writers.get(id) === write) this.writers.delete(id);
+		});
+		this.writers.set(id, write);
 	}
 
 	override onPropertyInspectorDidAppear(ev: PropertyInspectorDidAppearEvent): void {

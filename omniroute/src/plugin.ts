@@ -10,7 +10,7 @@ streamDeck.logger.setLevel("info");
 // One shared polling service for the entire plugin, independent of action visibility.
 export const quotaService = new QuotaService(undefined, undefined, undefined, logger);
 
-const quotaAction = new QuotaAction();
+const quotaAction = new QuotaAction(undefined, quotaService);
 streamDeck.actions.registerAction(quotaAction);
 streamDeck.actions.registerAction(new ConnectionSettingsAction(settings => quotaService.configure(settings)));
 logger.info("OmniRoute plugin starting");

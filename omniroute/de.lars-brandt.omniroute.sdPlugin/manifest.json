@@ -7,7 +7,7 @@
 			"Name": "Quota",
 			"UUID": "de.lars-brandt.omniroute.quota",
 			"Icon": "imgs/actions/quota/icon",
-			"Tooltip": "Quota placeholder",
+			"Tooltip": "Show remaining quotas for the selected OmniRoute connection",
 			"PropertyInspectorPath": "ui/quota.html",
 			"Controllers": [
 				"Keypad"
