@@ -1,7 +1,8 @@
 import type { QuotaRenderModel } from "./model";
 import type { ColorScheme } from "./color-schemes";
 import { resolveColorScheme } from "./color-schemes";
-import { shorten, svg, text } from "./svg";
+import { svg, text } from "./svg";
+import { nameBlock } from "./name";
 
 export function doubleRingSvg(model: QuotaRenderModel, scheme: ColorScheme = resolveColorScheme(undefined)): string {
 	const status = model.message.length || !model.rows.length;
@@ -17,7 +18,7 @@ export function doubleRingSvg(model: QuotaRenderModel, scheme: ColorScheme = res
 		if (!row.percentage.value) return track;
 		return track + `<circle cx="36" cy="${centerY}" r="${radius}" fill="none" stroke="${color}" stroke-width="4"${row.percentage.value === 100 ? "" : ` stroke-dasharray="${circumference * row.percentage.value / 100} ${circumference}"`} transform="rotate(-90 36 ${centerY})"/>`;
 	}).join("");
-	// Outer window first, inner window second; only special values need a glyph.
-	const legend = status ? "" : model.rows.map(row => `${shorten(row.label, 5)}${row.percentage.kind === "limited" ? "" : ` ${row.value}`}`).join(" / ");
-	return svg(`${rings}${text(shorten(model.displayName, 9), 36, centerY - 6, 8, 36, "middle")}${model.plan ? text(shorten(model.plan, 10), 36, centerY + 2, 6, 34, "middle") : ""}${model.message.map((line, i) => text(line, 36, 43 + i * 10, 9, 60, "middle")).join("")}${legend ? text(legend, 36, centerY + 11, 5, model.footer ? 32 : 38, "middle") : ""}<g fill="${model.warning ? "#fbbf24" : "#cbd5e1"}">${model.footer ? text(model.footer, 36, 70, 6, 68, "middle") : ""}</g>`);
+	// Arial's visible glyphs sit above SVG's middle baseline, especially for two lines.
+	const name = `<g dominant-baseline="middle">${nameBlock(model, centerY + (model.customName && model.displayName.includes("\\n") ? 1.5 : 1), 8, 36, 9, 9, 2)}</g>`;
+	return svg(`${rings}${name}${model.message.map((line, i) => text(line, 36, 43 + i * 10, 9, 60, "middle")).join("")}<g fill="${model.warning ? "#fbbf24" : "#cbd5e1"}">${model.footer ? text(model.footer, 36, 70, 6, 68, "middle") : ""}</g>`);
 }

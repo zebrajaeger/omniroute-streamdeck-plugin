@@ -21,6 +21,9 @@ let schemeCatalog = [];
 let schemeCatalogRequestId;
 let schemeCatalogReady = false;
 let namePending;
+let nameEditing = false;
+let nameRevision = 0;
+let nameRequestId;
 let names = new Map();
 let catalog = [{ id: "text", label: "Text" }];
 let catalogRequestId;
@@ -70,7 +73,7 @@ function render(status, connections = []) {
 }
 
 function updateName() {
-	if (namePending !== undefined) return;
+	if (namePending !== undefined || nameEditing) return;
 	nameField.value = customName || names.get(selectedId) || "";
 }
 
@@ -123,7 +126,7 @@ async function restoreSelection() {
 		confirmPresentation(saved);
 	}
 	if (schemePending === undefined) confirmColorScheme(result.settings?.colorScheme);
-	if (namePending === undefined) customName = typeof result.settings?.displayName === "string" ? result.settings.displayName.trim() : "";
+	if (namePending === undefined && !nameEditing) customName = typeof result.settings?.displayName === "string" ? result.settings.displayName.trim() : "";
 	updatePresentation();
 	updateName();
 	render("loading");
@@ -182,18 +185,43 @@ async function selectColorScheme(event) {
 }
 schemeSelector.addEventListener("input", selectColorScheme);
 schemeSelector.addEventListener("change", selectColorScheme);
-nameField.addEventListener("change", async () => {
-	const value = nameField.value.trim();
+async function saveName(value) {
+	value = value.trim();
+	if (value === (namePending ?? customName)) return;
+	const revision = ++nameRevision;
 	customName = value;
 	namePending = value;
+	nameEditing = false;
+	const id = `${++serial}-${Date.now()}`;
+	nameRequestId = id;
 	if (!value) nameField.value = names.get(selectedId) || "";
-	try { await client.send("sendToPlugin", { event: "setDisplayName", displayName: value }); }
-	catch { namePending = undefined; }
+	try { await client.send("sendToPlugin", { event: "setDisplayName", displayName: value, requestId: id }); }
+	catch {
+		if (revision === nameRevision) {
+			namePending = undefined;
+			nameRequestId = undefined;
+			void restoreSelection();
+		}
+	}
+}
+nameField.addEventListener("input", event => {
+	// The shadow input dispatches before sdpi-textfield updates its host value.
+	const value = event.composedPath?.().find(item => item?.tagName === "INPUT")?.value ?? nameField.value;
+	nameEditing = true;
+	void saveName(value);
 });
+nameField.addEventListener("change", () => { void saveName(nameField.value); });
 document.querySelector("#reload-providers").addEventListener("click", loadProviderConnections);
 client.sendToPropertyInspector.subscribe(message => {
 	if (message.context !== activeContext) return;
 	const payload = message.payload;
+	if (payload?.event === "displayNameSaved" && payload.requestId === nameRequestId) {
+		nameRequestId = undefined;
+		namePending = undefined;
+		if (!payload.saved) void restoreSelection();
+		else updateName();
+		return;
+	}
 	if (payload?.event === "presentationsLoaded" && payload.requestId === catalogRequestId && Array.isArray(payload.presentations)) {
 		const options = payload.presentations.filter(item => typeof item?.id === "string" && typeof item.label === "string");
 		if (!options.some(item => item.id === "text")) return;
@@ -262,7 +290,7 @@ client.didReceiveSettings.subscribe(message => {
 		confirmPresentation(nextPresentation);
 	}
 	const nextName = typeof settings.displayName === "string" ? settings.displayName.trim() : "";
-	if (namePending === undefined || namePending === nextName) {
+	if (!nameEditing && (namePending === undefined || namePending === nextName)) {
 		namePending = undefined;
 		customName = nextName;
 		updateName();

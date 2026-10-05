@@ -6,6 +6,7 @@ export interface QuotaRenderModel {
 	readonly heading: string;
 	readonly providerName: string;
 	readonly displayName: string;
+	readonly customName: boolean;
 	readonly plan: string;
 	readonly rows: readonly { readonly key: string; readonly label: string; readonly value: string; readonly percentage: QuotaPercentage }[];
 	readonly message: readonly string[];
@@ -37,7 +38,7 @@ function percentage(value: QuotaPercentage): string {
 }
 
 export function quotaRenderModel(state: QuotaState, connectionId: unknown, displayName?: unknown): QuotaRenderModel {
-	const status = (message: string[]): QuotaRenderModel => ({ heading: "Quota", providerName: "", displayName: "Quota", plan: "", rows: [], message, footer: "", warning: true });
+	const status = (message: string[]): QuotaRenderModel => ({ heading: "Quota", providerName: "", displayName: "Quota", customName: false, plan: "", rows: [], message, footer: "", warning: true });
 	if (typeof connectionId !== "string" || !connectionId.trim()) return status(["Auswählen"]);
 	if (state.status === "unconfigured") return status(["Verbindung"]);
 	if (state.status === "invalid-configuration") return status(["URL ungültig"]);
@@ -53,9 +54,10 @@ export function quotaRenderModel(state: QuotaState, connectionId: unknown, displ
 	let labels = selected.map(key => key === "session" ? "S" : key === "weekly" ? "W" : shorten(key || "?", 5));
 	if (labels.length === 2 && labels[0] === labels[1]) labels = labels.map((label, i) => `${Array.from(label).slice(0, 3).join("")}…${i + 1}`);
 	const overflow = keys.length > 2 ? `+${keys.length - 2}` : "";
-	const name = normalizeDisplayName(displayName) ?? provider.provider;
+	const custom = normalizeDisplayName(displayName);
+	const name = custom ?? provider.provider;
 	return {
-		heading: shorten(name, 11), providerName: provider.provider, displayName: name, plan: shorten(provider.plan ?? "", 12),
+		heading: shorten(name, 11), providerName: provider.provider, displayName: name, customName: !!custom, plan: shorten(provider.plan ?? "", 12),
 		rows: selected.map((key, i) => ({ key, label: labels[i]!, value: percentage(provider.quotas[key]!.percentage), percentage: provider.quotas[key]!.percentage })),
 		message: keys.length ? [] : ["Quota ?"],
 		footer: [state.stale ? `Alt ${error === "Datenfehler" ? "Daten" : error ?? "Fehler"}` : "", overflow].filter(Boolean).join(" · "),

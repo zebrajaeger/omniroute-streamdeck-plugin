@@ -22,7 +22,7 @@ type DiscoveryMessage = { event: "loadProviderConnections" | "loadPresentations"
 	{ event: "selectProviderConnection"; connectionId: string } |
 	{ event: "selectPresentation"; presentation: string; requestId?: string } |
 	{ event: "selectColorScheme"; colorScheme: string; requestId?: string } |
-	{ event: "setDisplayName"; displayName: string };
+	{ event: "setDisplayName"; displayName: string; requestId?: string };
 
 @action({ UUID: "de.lars-brandt.omniroute.quota" })
 export class QuotaAction extends SingletonAction {
@@ -143,6 +143,7 @@ export class QuotaAction extends SingletonAction {
 			const id = ev.action.id;
 			const presentationRequestId = message.event === "selectPresentation" && typeof message.requestId === "string" ? message.requestId : undefined;
 			const schemeRequestId = message.event === "selectColorScheme" && typeof message.requestId === "string" ? message.requestId : undefined;
+			const nameRequestId = message.event === "setDisplayName" && typeof message.requestId === "string" ? message.requestId : undefined;
 			const previous = this.settingWrites.get(id) ?? Promise.resolve();
 			const write = previous.catch(() => {}).then(async () => {
 				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return false;
@@ -177,6 +178,8 @@ export class QuotaAction extends SingletonAction {
 				if (saved && schemeRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
 					await streamDeck.ui.sendToPropertyInspector({ event: "colorSchemeSaved", requestId: schemeRequestId,
 						colorScheme: message.event === "selectColorScheme" ? message.colorScheme : "", saved: true });
+				if (saved && nameRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "displayNameSaved", requestId: nameRequestId, saved: true });
 			}
 			catch (error) {
 				if (presentationRequestId &&
@@ -186,6 +189,8 @@ export class QuotaAction extends SingletonAction {
 				else if (schemeRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
 					await streamDeck.ui.sendToPropertyInspector({ event: "colorSchemeSaved", requestId: schemeRequestId,
 						colorScheme: message.event === "selectColorScheme" ? message.colorScheme : "", saved: false });
+				else if (nameRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "displayNameSaved", requestId: nameRequestId, saved: false });
 				else throw error;
 			} finally { if (this.settingWrites.get(id) === write) this.settingWrites.delete(id); }
 			return;

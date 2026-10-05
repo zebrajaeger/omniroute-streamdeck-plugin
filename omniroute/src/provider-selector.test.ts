@@ -140,6 +140,82 @@ test("catalog options, unknown saved ID and automatic provider name never auto-s
 	assert.equal(view.messages.at(-1).presentation, "third");
 });
 
+test("sdpi-textfield input fires before host value changes and blur does not emit change", async () => {
+	const view = inspector({ connectionId: "a" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a" } } });
+	const discovery = view.messages.find(message => message.event === "loadProviderConnections");
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: discovery.requestId,
+		status: "ready", connections: [{ connectionId: "a", provider: "codex" }] } });
+	assert.equal(view.name.value, "codex");
+	assert.equal(view.messages.some(message => message.event === "setDisplayName"), false);
+	// Observed in the Stream Deck Developer Tools: input's composed path contains the
+	// updated inner INPUT, while sdpi-textfield.value is still the old provider name.
+	const inner = { tagName: "INPUT", value: "Work" };
+	view.handlers["name:input"]({ composedPath: () => [inner, view.name] });
+	view.name.value = "Work";
+	view.handlers["name:blur"]?.({});
+	await flush();
+	assert.deepEqual(view.messages.filter(message => message.event === "setDisplayName").map(message => message.displayName), ["Work"]);
+});
+
+test("rapid name edits ignore stale settings and failed writes restore saved name", async () => {
+	let fail = false;
+	const view = inspector({ connectionId: "a", displayName: "Saved" }, async payload => {
+		if (payload.event === "setDisplayName" && fail) throw new Error("write failed");
+	});
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", displayName: "Saved" } } });
+	const discovery = view.messages.find(message => message.event === "loadProviderConnections");
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: discovery.requestId,
+		status: "ready", connections: [{ connectionId: "a", provider: "codex" }] } });
+	const type = (value: string) => { view.handlers["name:input"]({ composedPath: () => [{ tagName: "INPUT", value }] }); view.name.value = value; };
+	type("First");
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", displayName: "Saved" } } });
+	assert.equal(view.name.value, "First");
+	type("Second");
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", displayName: "First" } } });
+	assert.equal(view.name.value, "Second");
+	const writes = view.messages.filter(message => message.event === "setDisplayName");
+	assert.deepEqual(writes.map(message => message.displayName), ["First", "Second"]);
+	view.listeners.reply({ context: "key-a", payload: { event: "displayNameSaved", requestId: writes[0].requestId, saved: true } });
+	assert.equal(view.name.value, "Second");
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", displayName: "Second" } } });
+	view.listeners.reply({ context: "key-a", payload: { event: "displayNameSaved", requestId: writes[1].requestId, saved: true } });
+	fail = true;
+	type("Unsaved");
+	await flush();
+	assert.equal(view.name.value, "Saved");
+});
+
+test("name acknowledgement releases pending state without settings echo", async () => {
+	const view = inspector({ connectionId: "a" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a" } } });
+	const discovery = view.messages.find(message => message.event === "loadProviderConnections");
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: discovery.requestId,
+		status: "ready", connections: [{ connectionId: "a", provider: "codex" }] } });
+	view.handlers["name:input"]({ composedPath: () => [{ tagName: "INPUT", value: "Work" }] });
+	const write = view.messages.at(-1);
+	view.name.value = "Work";
+	view.listeners.reply({ context: "key-a", payload: { event: "displayNameSaved", requestId: write.requestId, saved: true } });
+	view.select.value = "";
+	await view.handlers["select:change"]({});
+	assert.equal(view.name.value, "Work");
+});
+
+test("literal newline escape remains in the name field after reopening", async () => {
+	const view = inspector({ connectionId: "a" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a" } } });
+	view.handlers["name:input"]({ composedPath: () => [{ tagName: "INPUT", value: "Work\\nTeam" }] });
+	assert.equal(view.messages.at(-1).displayName, "Work\\nTeam");
+	const reopened = inspector({ connectionId: "a", displayName: "Work\\nTeam" });
+	await flush();
+	reopened.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", displayName: "Work\\nTeam" } } });
+	assert.equal(reopened.name.value, "Work\\nTeam");
+});
+
 test("pending edits survive delayed settings and discovery; automatic names follow confirmed connection", async () => {
 	const view = inspector({ connectionId: "a" });
 	await flush();

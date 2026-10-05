@@ -85,16 +85,75 @@ test("catalog dispatch, fallback and automatic/custom naming", () => {
 	assert.equal(quotaRenderModel(ready, "a", "abcdefghijkl🚀xyz").heading, "abcdefghij…");
 });
 
+test("literal newline escape renders a centered safe name block without shifting other content", () => {
+	const render = (name: string, presentation: string, state: QuotaState = ready) =>
+		Buffer.from(quotaImage(state, "a", presentation, name).split(",")[1]!, "base64").toString();
+	for (const presentation of ["text", "double-ring"]) {
+		const image = render("Work\\nTeam", presentation);
+		const lines = [...image.matchAll(/<text x="36" y="([\d.]+)"[^>]*text-anchor="middle"[^>]*>(Work|Team)<\/text>/g)];
+		assert.deepEqual(lines.map(line => line[2]), ["Work", "Team"]);
+		assert.equal((Number(lines[0]?.[1]) + Number(lines[1]?.[1])) / 2, presentation === "text" ? 13 : 37.5);
+		if (presentation === "text") {
+			assert.match(image, />pro<\/text>/);
+			assert.match(image, />84%<\/text>/);
+		} else {
+			assert.doesNotMatch(image, />pro<\/text>|>S \/ W<\/text>/);
+		}
+		const unsafe = render("<&\\nTeam", presentation);
+		assert.match(unsafe, /&lt;&amp;/);
+		assert.doesNotMatch(unsafe, /<script>|<&/);
+		const overflow = render("First\\nSecond\\nThird\\nFourth", presentation);
+		assert.doesNotMatch(overflow, />Fourth<\/text>/);
+		assert.equal(overflow, render("First\\nSecond\\nThird\\nFourth", presentation));
+	}
+	assert.equal(render("", "text"), render("   ", "text"));
+});
+
+test("ring center contains only the effective name with or without a plan and footer", () => {
+	for (const state of [ready, { status: "unavailable", stale: true, error: "unavailable", snapshot } as QuotaState]) {
+		for (const [customName, expected] of [[undefined, "codex"], ["Work", "Work"], ["Work\\nTeam", "Work|Team"]] as const) {
+			const image = Buffer.from(quotaImage(state, "a", "double-ring", customName).split(",")[1]!, "base64").toString();
+			const center = state.stale ? 32 : 36;
+			const nameLines = [...image.matchAll(/<text x="36" y="([\d.]+)"[^>]*text-anchor="middle"[^>]*>([^<]*)<\/text>/g)]
+				.filter(match => match[2] === "codex" || match[2] === "Work" || match[2] === "Team");
+			assert.deepEqual(nameLines.map(match => match[2]).join("|"), expected);
+			assert.equal(nameLines.reduce((sum, match) => sum + Number(match[1]), 0) / nameLines.length,
+				center + (customName?.includes("\\n") ? 1.5 : 1));
+			assert.doesNotMatch(image, />pro<\/text>|>S \/ W<\/text>/);
+			if (state.stale) assert.match(image, />Alt Offline<\/text>/);
+		}
+	}
+	const text = Buffer.from(quotaImage(ready, "a", "text", "Work\\nTeam").split(",")[1]!, "base64").toString();
+	assert.match(text, />pro<\/text>/);
+	assert.match(text, />84%<\/text>/);
+	assert.match(text, />76%<\/text>/);
+});
+
+test("ring name uses an optical baseline correction without changing ring geometry", () => {
+	const render = (name: string | undefined, state: QuotaState = ready) =>
+		Buffer.from(quotaImage(state, "a", "double-ring", name).split(",")[1]!, "base64").toString();
+	for (const state of [ready, { status: "unavailable", stale: true, error: "unavailable", snapshot } as QuotaState]) {
+		const center = state.stale ? 32 : 36;
+		const automatic = render(undefined, state);
+		const multiline = render("codex\\nsss", state);
+		assert.match(automatic, new RegExp(`<circle cx="36" cy="${center}"`));
+		assert.match(automatic, new RegExp(`<g dominant-baseline="middle"><text x="36" y="${center + 1}"[^>]*>codex</text>`));
+		assert.match(multiline, new RegExp(`<circle cx="36" cy="${center}"`));
+		assert.match(multiline, new RegExp(`<g dominant-baseline="middle"><text x="36" y="${center - 3}"[^>]*>codex</text><text x="36" y="${center + 6}"[^>]*>sss</text>`));
+	}
+	assert.equal(quotaSvg(quotaRenderModel(ready, "a")), quotaSvg(quotaRenderModel(ready, "a", "")));
+});
+
 test("double ring uses typed fractions and preserves all special/status states", () => {
 	const render = (state: QuotaState, id = "a") => Buffer.from(quotaImage(state, id, "double-ring").split(",")[1]!, "base64").toString();
 	const image = render(ready);
 	assert.match(image, /width="72" height="72"/);
-	assert.match(image, />S \/ W<\/text>/);
+	assert.doesNotMatch(image, />S \/ W<\/text>|>pro<\/text>/);
 	assert.doesNotMatch(image, /84%|76%/);
 	assert.match(image, /rotate\(-90 36 36\)/);
 	assert.match(image, /stroke="#38bdf8"/);
 	assert.match(image, /stroke="#a78bfa"/);
-	assert.match(image, /<text[^>]*>codex<\/text>.*<text[^>]*>pro<\/text>/);
+	assert.match(image, /<text x="36" y="37"[^>]*>codex<\/text>/);
 	const circles = [...image.matchAll(/<circle[^>]*>/g)].map(match => match[0]);
 	assert.match(circles[1]!, /r="32".*stroke="#38bdf8".*stroke-dasharray="[\d.]+ [\d.]+".*rotate\(-90 36 36\)/);
 	assert.match(circles[3]!, /r="24".*stroke="#a78bfa".*rotate\(-90 36 36\)/);
@@ -104,12 +163,13 @@ test("double ring uses typed fractions and preserves all special/status states",
 	assert.ok(Math.abs(Number(outer[1]) / Number(outer[2]) - 0.84) < 1e-12);
 	assert.ok(Math.abs(Number(inner[1]) / Number(inner[2]) - 0.76) < 1e-12);
 	assert.equal((render(ready, "b").match(/stroke="#475569"/g) ?? []).length, 1);
-	assert.match(render(ready, "b"), />S<\/text>/);
+	assert.match(render(ready, "b"), />codex<\/text>/);
+	assert.doesNotMatch(render(ready, "b"), />S<\/text>/);
 	assert.doesNotMatch(render(ready, "b"), />W<\/text>/);
 	const fraction: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "<test>", quotas: {
 		a: { remainingPercentage: 0 }, b: { remainingPercentage: 12.5 }, c: { remainingPercentage: 100 },
 	} }] }) };
-	assert.match(render(fraction), />a \/ b<\/text>/);
+	assert.doesNotMatch(render(fraction), />a \/ b<\/text>/);
 	assert.doesNotMatch(render(fraction), /0%|13%/);
 	assert.match(render(fraction), /<circle cx="36" cy="32" r="29"[^>]*stroke="#475569"/);
 	assert.ok(32 + 29 + 2 < 70);
@@ -119,12 +179,13 @@ test("double ring uses typed fractions and preserves all special/status states",
 	assert.match(render(fraction), /\+1/);
 	assert.doesNotMatch(render(fraction), /<test>/);
 	const full: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "P", quotas: { session: { remainingPercentage: 100 } } }] }) };
-	assert.match(render(full), />S<\/text>/);
+	assert.match(render(full), />P<\/text>/);
+	assert.doesNotMatch(render(full), />S<\/text>/);
 	assert.doesNotMatch(render(full), /100%/);
 	assert.match(render(full), /stroke="#38bdf8"[^>]*transform="rotate\(-90 36 36\)"/);
 	assert.doesNotMatch(render(full), /stroke="#38bdf8"[^>]*stroke-dasharray/);
 	const special: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "P", quotas: { a: { unlimited: true }, b: {} } }] }) };
-	assert.match(render(special), />a ∞ \/ b \?<\/text>/);
+	assert.doesNotMatch(render(special), />a ∞ \/ b \?<\/text>/);
 	assert.doesNotMatch(render(special), /rotate\(-90/);
 	assert.match(render(special), /stroke-dasharray="1 3"/);
 	assert.match(render(special), /stroke-dasharray="3 4"/);
@@ -138,7 +199,7 @@ test("double ring uses typed fractions and preserves all special/status states",
 	assert.doesNotMatch(render(ready), /Alt Offline/);
 	const unsafe = render({ status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "<unsafe>", quotas: { "<&": { remainingPercentage: 20 } } }] }) });
 	assert.match(unsafe, /&lt;unsafe&gt;/);
-	assert.match(unsafe, /&lt;&amp;/);
+	assert.doesNotMatch(unsafe, /&lt;&amp;/);
 	assert.doesNotMatch(unsafe, /<unsafe>|<script>/);
 });
 

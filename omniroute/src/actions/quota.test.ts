@@ -112,6 +112,8 @@ test("mixed settings writes serialize, preserve unrelated fields and reject unsu
 		assert.deepEqual(settings, { untouched: 9, connectionId: "one", presentation: "text", displayName: "Work" });
 		await send({ event: "setDisplayName", displayName: "   " });
 		assert.deepEqual(settings, { untouched: 9, connectionId: "one", presentation: "text" });
+		await send({ event: "setDisplayName", displayName: "Work\\nTeam" });
+		assert.equal(settings.displayName, "Work\\nTeam");
 		action.onPropertyInspectorDidDisappear({ action: key } as any);
 		await send({ event: "selectPresentation", presentation: "double-ring" });
 		assert.equal(settings.presentation, "text");
@@ -253,6 +255,80 @@ test("changing one visible presentation redraws from shared state without fetchi
 		assert.equal(b.saved().presentation, undefined);
 		assert.equal(stateReads, 4); // two initial renders, two local presentation changes; no quota fetch API
 	} finally {
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});
+
+test("saving a name redraws only its visible key without a settings echo or a quota fetch", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	const state = { status: "ready" as const, stale: false, snapshot: parseSnapshot({ providers: [
+		{ connectionId: "a", provider: "codex", quotas: { session: { remainingPercentage: 84 } } },
+		{ connectionId: "b", provider: "codex", quotas: { session: { remainingPercentage: 23 } } },
+	] }) };
+	let reads = 0;
+	const service = { getState: () => { reads++; return state; }, subscribe: () => () => {} };
+	const create = (id: string, connectionId: string, presentation: string) => {
+		let saved: any = { connectionId, presentation, untouched: true };
+		const images: string[] = [];
+		return { id, images, isKey: () => true, getSettings: async () => saved,
+			setSettings: async (next: any) => { saved = next; }, saved: () => saved,
+			setTitle: async () => {}, setImage: async (image: string) => { images.push(image); } };
+	};
+	const a = create("first", "a", "text"), b = create("second", "b", "double-ring");
+	const action = new QuotaAction(undefined, service);
+	try {
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => a });
+		for (const key of [a, b]) action.onWillAppear({ action: key, payload: { settings: key.saved() } } as any);
+		await new Promise(resolve => setImmediate(resolve));
+		const untouched = b.images.length;
+		action.onPropertyInspectorDidAppear({ action: a } as any);
+		const send = (name: string) => action.onSendToPlugin({ action: a, payload: { event: "setDisplayName", displayName: name } } as any);
+		await send("Work\\nTeam");
+		await new Promise(resolve => setImmediate(resolve));
+		assert.deepEqual(a.saved(), { connectionId: "a", presentation: "text", untouched: true, displayName: "Work\\nTeam" });
+		assert.equal(a.images.at(-1), quotaImage(state, "a", "text", "Work\\nTeam"));
+		assert.equal(b.images.length, untouched);
+		await send("   ");
+		await new Promise(resolve => setImmediate(resolve));
+		assert.equal(a.saved().displayName, undefined);
+		assert.equal(a.images.at(-1), quotaImage(state, "a", "text"));
+		assert.equal(reads, 4);
+	} finally {
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});
+
+test("name write acknowledgements follow successful saves and report failures", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	const originalSend = streamDeck.ui.sendToPropertyInspector;
+	let saved: any = { connectionId: "a" };
+	let fail = false;
+	const replies: any[] = [];
+	const key = { id: "a", getSettings: async () => saved, setSettings: async (next: any) => {
+		if (fail) throw new Error("write failed");
+		saved = next;
+	} };
+	try {
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => key });
+		streamDeck.ui.sendToPropertyInspector = async payload => { replies.push(payload); };
+		const action = new QuotaAction();
+		action.onPropertyInspectorDidAppear({ action: key } as any);
+		const send = (displayName: string, requestId: string) => action.onSendToPlugin({ action: key,
+			payload: { event: "setDisplayName", displayName, requestId } } as any);
+		await Promise.all([send("First", "first"), send("Work\\nTeam", "latest")]);
+		assert.equal(saved.displayName, "Work\\nTeam");
+		assert.deepEqual(replies, [
+			{ event: "displayNameSaved", requestId: "first", saved: true },
+			{ event: "displayNameSaved", requestId: "latest", saved: true },
+		]);
+		fail = true;
+		await send("Unsaved", "failed");
+		assert.equal(saved.displayName, "Work\\nTeam");
+		assert.deepEqual(replies.at(-1), { event: "displayNameSaved", requestId: "failed", saved: false });
+	} finally {
+		streamDeck.ui.sendToPropertyInspector = originalSend;
 		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
 		else delete (streamDeck.ui as any).action;
 	}

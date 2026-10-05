@@ -1,10 +1,4 @@
-# quota-key-display Specification
-
-## Purpose
-
-Zeigt die verbleibenden Quotas der jeweils zugeordneten OmniRoute-Verbindung kompakt auf Stream-Deck-Tasten und macht fehlende, veraltete oder fehlerhafte Daten sichtbar.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Render the assigned provider snapshot
 Each Quota key SHALL render only the snapshot matching its saved `connectionId`, using the shared data source rather than making its own HTTP request. Each key SHALL remain assigned to exactly one provider connection. The key SHALL show its effective display name (a nonblank custom name, otherwise the provider name); the optional plan SHALL appear in the text presentation but SHALL NOT appear in the double-ring presentation. Multiple keys assigned to different accounts of the same provider SHALL remain independent. Becoming visible or changing action settings, including presentation or name, SHALL update the key from the current shared state without additional quota requests.
@@ -35,63 +29,6 @@ The key SHALL render a readable combined 72×72 layout with up to two quota wind
 #### Scenario: Unlimited, unknown and exhausted
 - **WHEN** a rendered window is unlimited, unknown or exhausted
 - **THEN** text shows respectively `∞`, `?` or `0%`, while double-ring shows distinct nonnumeric special states or an empty progress arc respectively, without a fabricated percentage
-
-### Requirement: Make configuration and data failures visible
-The key SHALL distinguish unassigned action, missing/invalid shared configuration, initial loading, missing selected connection after a successful snapshot, unknown quota for a connection without windows, authentication failure, unavailable OmniRoute and invalid response. A service error SHALL NOT be mislabeled as a missing connection or exhausted quota. No credentials or raw server errors SHALL appear on the key.
-
-#### Scenario: Unassigned action
-- **WHEN** a Quota key has no connection ID
-- **THEN** it displays a configure/select-connection state rather than quota values
-
-#### Scenario: Selected connection disappears
-- **WHEN** a successful current snapshot does not contain the selected connection ID
-- **THEN** the key shows connection unavailable and retains the assignment rather than showing another account
-
-#### Scenario: Authentication failure without previous data
-- **WHEN** the shared source reports HTTP 401/403 and no usable snapshot exists
-- **THEN** the key shows an authentication failure without inventing quota values
-
-### Requirement: Mark stale values and recover promptly
-If the shared source retains a previous successful snapshot after an error, the key SHALL display matching cached values only with a visible stale marker and an error-category indicator. A successful refresh SHALL remove that marker and update the values. A global configuration change SHALL remove old-instance values immediately. Key visibility SHALL NOT create additional polling loops, and hidden or removed keys SHALL NOT continue receiving rendering updates.
-
-#### Scenario: Preserve data during a transient outage
-- **WHEN** OmniRoute becomes unavailable after a successful snapshot
-- **THEN** the assigned key shows the last known values visibly marked stale with an unavailable indicator
-
-#### Scenario: Switch instance while old data exists
-- **WHEN** the shared OmniRoute URL or API key changes
-- **THEN** old values are removed until data from the new configuration is available
-
-#### Scenario: Hidden key stops rendering
-- **WHEN** a Quota key disappears from the visible profile
-- **THEN** subsequent shared-state changes do not render to that hidden key
-
-### Requirement: Select and persist a presentation per key
-The Quota Property Inspector SHALL offer the available presentations, initially text and double-ring, using a presentation selector. A selected presentation SHALL be persisted with a stable identifier in that action's settings while preserving the connection assignment, display name and unrelated settings. Changing the selection SHALL update the visible key to the newly selected presentation from the current shared quota state without an additional quota request; it SHALL NOT alter another key's presentation. Missing, malformed or unsupported presentation identifiers SHALL render and appear in the inspector as text without silently rewriting an unsupported saved identifier. Reopening the inspector or restarting the plugin SHALL restore supported selections. Additional registered presentations SHALL be available through the same selector.
-
-#### Scenario: Existing key remains compatible
-- **WHEN** an existing assigned key has no presentation setting
-- **THEN** it uses the existing text presentation and the inspector shows text selected
-
-#### Scenario: Change presentation and persist it
-- **WHEN** a user selects double-ring instead of text for a visible assigned key with current quota data
-- **THEN** that key displays double-ring without an additional quota request, its action settings retain the selection together with its connection, name and unrelated settings, and other keys remain unchanged
-
-#### Scenario: Switch back to text
-- **WHEN** a user selects text for a visible key previously set to double-ring
-- **THEN** that key displays text without an additional quota request and text is stored as its selected presentation
-
-#### Scenario: Restore independent presentations
-- **WHEN** two keys use text and double-ring respectively and their inspectors are reopened after a restart
-- **THEN** each retains its own presentation, connection and name
-
-#### Scenario: Unsupported saved presentation
-- **WHEN** a key has an unsupported saved presentation identifier
-- **THEN** the key safely renders text and the inspector shows text without modifying the stored identifier until the user explicitly selects a presentation
-
-#### Scenario: Extend available presentations
-- **WHEN** a further presentation is registered in the plugin
-- **THEN** it is selectable and restorable through the existing per-key selection mechanism without changing connection selection or quota polling behavior
 
 ### Requirement: Configure a display name per key
 The Quota Property Inspector SHALL provide an editable name field for the key. Without a saved nonblank custom name, the field SHALL be prefilled from the assigned provider name currently used as the key heading when metadata is available, and the key SHALL use that automatic provider name. This automatic prefill SHALL NOT itself create a custom override. A user-entered nonblank name SHALL be saved only in that action's settings and used in both presentations. An explicit change to the name field SHALL persist even when no settings notification follows the write, and SHALL update the visible key from the current shared quota state without a new quota request. The two literal characters `\n` in a custom name SHALL create a line break on the key in both presentations. The resulting text block SHALL be horizontally and vertically centered within the existing name area in the text presentation; in the double-ring presentation the effective name, including the automatic name or a single-line custom name, SHALL be horizontally and vertically centered in the ring center instead of the plan and window legend. The text presentation SHALL retain its quota, plan and status positions; the ring presentation SHALL retain its ring, status and overflow positions. Without a custom name, the text presentation's existing single-line automatic-name layout SHALL remain unchanged. Clearing the field or entering whitespace only SHALL remove the override and restore the automatic provider name. Changing the connection SHALL update an automatic name but SHALL NOT overwrite a custom name. Opening the inspector before provider metadata arrives SHALL NOT save a placeholder as a custom name. User text SHALL be safely rendered without executing markup or breaking the key image.
