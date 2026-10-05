@@ -7,6 +7,9 @@ let selectedId = "";
 let customName = "";
 let presentation = "text";
 let presentationPending;
+let presentationRequestId;
+let confirmedPresentation = "text";
+let presentationRevision = 0;
 let namePending;
 let names = new Map();
 let catalog = [{ id: "text", label: "Text" }];
@@ -67,6 +70,14 @@ function updatePresentation() {
 	presentationSelector.disabled = !catalogReady;
 }
 
+function confirmPresentation(value) {
+	confirmedPresentation = value;
+	if (presentationPending === undefined || presentationPending === value) {
+		presentation = value;
+		updatePresentation();
+	}
+}
+
 async function loadProviderConnections() {
 	const id = `${++serial}-${Date.now()}`;
 	requestId = id;
@@ -81,7 +92,10 @@ async function restoreSelection() {
 	const result = await client.getSettings();
 	if (revision !== viewRevision) return;
 	selectedId = typeof result.settings?.connectionId === "string" ? result.settings.connectionId : "";
-	if (presentationPending === undefined) presentation = typeof result.settings?.presentation === "string" ? result.settings.presentation : "text";
+	if (presentationPending === undefined) {
+		const saved = typeof result.settings?.presentation === "string" ? result.settings.presentation : "text";
+		confirmPresentation(saved);
+	}
 	if (namePending === undefined) customName = typeof result.settings?.displayName === "string" ? result.settings.displayName.trim() : "";
 	updatePresentation();
 	updateName();
@@ -98,13 +112,28 @@ selector.addEventListener("change", async () => {
 	try { await client.send("sendToPlugin", { event: "selectProviderConnection", connectionId: id }); }
 	catch { selectionPending = undefined; render("unavailable"); }
 });
-presentationSelector.addEventListener("change", async () => {
-	if (!catalogReady || !catalog.some(item => item.id === presentationSelector.value)) return;
-	presentation = presentationSelector.value;
-	presentationPending = presentation;
-	try { await client.send("sendToPlugin", { event: "selectPresentation", presentation }); }
-	catch { presentationPending = undefined; }
-});
+async function selectPresentation(event) {
+	// sdpi-select dispatches input from its shadow <select> before updating the host value.
+	const value = event.composedPath?.().find(item => item?.tagName === "SELECT")?.value ??
+		presentationSelector.shadowRoot?.querySelector("select")?.value ?? presentationSelector.value;
+	if (!catalogReady || !catalog.some(item => item.id === value) || value === presentation) return;
+	presentation = value;
+	presentationPending = value;
+	const id = `${++serial}-${Date.now()}`;
+	presentationRequestId = id;
+	const revision = ++presentationRevision;
+	updatePresentation();
+	try { await client.send("sendToPlugin", { event: "selectPresentation", presentation: value, requestId: id }); }
+	catch {
+		if (presentationRevision === revision) {
+			presentationRequestId = undefined;
+			presentationPending = undefined;
+			void restoreSelection();
+		}
+	}
+}
+presentationSelector.addEventListener("input", selectPresentation);
+presentationSelector.addEventListener("change", selectPresentation);
 nameField.addEventListener("change", async () => {
 	const value = nameField.value.trim();
 	customName = value;
@@ -123,6 +152,15 @@ client.sendToPropertyInspector.subscribe(message => {
 		catalog = options;
 		catalogReady = true;
 		updatePresentation();
+		return;
+	}
+	if (payload?.event === "presentationSaved" && payload.requestId === presentationRequestId) {
+		presentationRequestId = undefined;
+		presentationPending = undefined;
+		if (payload.saved) confirmPresentation(payload.presentation);
+		else {
+			void restoreSelection();
+		}
 		return;
 	}
 	if (payload?.event === "providerConnectionsInvalidated") { void loadProviderConnections(); return; }
@@ -148,9 +186,8 @@ client.didReceiveSettings.subscribe(message => {
 	}
 	const nextPresentation = typeof settings.presentation === "string" ? settings.presentation : "text";
 	if (presentationPending === undefined || presentationPending === nextPresentation) {
-		presentationPending = undefined;
-		presentation = nextPresentation;
-		updatePresentation();
+		if (presentationPending === nextPresentation) presentationPending = undefined;
+		confirmPresentation(nextPresentation);
 	}
 	const nextName = typeof settings.displayName === "string" ? settings.displayName.trim() : "";
 	if (namePending === undefined || namePending === nextName) {

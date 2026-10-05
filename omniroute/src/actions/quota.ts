@@ -19,7 +19,7 @@ interface VisibleKey {
 
 type DiscoveryMessage = { event: "loadProviderConnections" | "loadPresentations"; requestId: string } |
 	{ event: "selectProviderConnection"; connectionId: string } |
-	{ event: "selectPresentation"; presentation: string } |
+	{ event: "selectPresentation"; presentation: string; requestId?: string } |
 	{ event: "setDisplayName"; displayName: string };
 
 @action({ UUID: "de.lars-brandt.omniroute.quota" })
@@ -30,7 +30,7 @@ export class QuotaAction extends SingletonAction {
 	private readonly visible = new Map<string, VisibleKey>();
 	// Keep the writer alive across a disappear/reappear with the same context ID.
 	private readonly writers = new Map<string, Promise<void>>();
-	private readonly settingWrites = new Map<string, Promise<void>>();
+	private readonly settingWrites = new Map<string, Promise<unknown>>();
 	constructor(private readonly registry: ProviderRegistry = new ProviderRegistry(),
 		private readonly service?: Pick<QuotaService, "getState" | "subscribe">) {
 		super();
@@ -133,11 +133,12 @@ export class QuotaAction extends SingletonAction {
 			if (message.event === "setDisplayName" && typeof message.displayName !== "string") return;
 			const visit = this.activeVisit;
 			const id = ev.action.id;
+			const presentationRequestId = message.event === "selectPresentation" && typeof message.requestId === "string" ? message.requestId : undefined;
 			const previous = this.settingWrites.get(id) ?? Promise.resolve();
 			const write = previous.catch(() => {}).then(async () => {
-				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return;
+				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return false;
 				const settings = await ev.action.getSettings();
-				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return;
+				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return false;
 				let next: JsonObject;
 				if (message.event === "selectProviderConnection") next = mergeConnectionId(settings, message.connectionId);
 				else if (message.event === "selectPresentation") next = { ...settings, presentation: message.presentation as string };
@@ -155,9 +156,22 @@ export class QuotaAction extends SingletonAction {
 					key.settings = next;
 					this.render(key);
 				}
+				return true;
 			});
 			this.settingWrites.set(id, write);
-			try { await write; } finally { if (this.settingWrites.get(id) === write) this.settingWrites.delete(id); }
+			try {
+				const saved = await write;
+				if (saved && presentationRequestId && this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "presentationSaved", requestId: presentationRequestId,
+						presentation: message.event === "selectPresentation" ? message.presentation : "", saved: true });
+			}
+			catch (error) {
+				if (presentationRequestId &&
+					this.activeContext === id && streamDeck.ui.action?.id === id && this.activeVisit === visit)
+					await streamDeck.ui.sendToPropertyInspector({ event: "presentationSaved", requestId: presentationRequestId,
+						presentation: message.event === "selectPresentation" ? message.presentation : "", saved: false });
+				else throw error;
+			} finally { if (this.settingWrites.get(id) === write) this.settingWrites.delete(id); }
 			return;
 		}
 		if (message?.event !== "loadProviderConnections" || typeof message.requestId !== "string" || !message.requestId) return;

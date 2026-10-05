@@ -6,7 +6,7 @@ import vm from "node:vm";
 const script = readFileSync(new URL("../de.lars-brandt.omniroute.sdPlugin/ui/provider-selector.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../de.lars-brandt.omniroute.sdPlugin/ui/quota.html", import.meta.url), "utf8");
 
-function inspector(saved: Record<string, unknown> = {}) {
+function inspector(saved: Record<string, unknown> = {}, sendImpl?: (payload: any) => Promise<void>) {
 	const handlers: Record<string, (event: any) => void> = {};
 	const select = {
 		children: [] as any[], value: "", disabled: false,
@@ -14,14 +14,15 @@ function inspector(saved: Record<string, unknown> = {}) {
 		addEventListener(event: string, callback: (event: any) => void) { handlers[`select:${event}`] = callback; },
 	};
 	const reload = { addEventListener(event: string, callback: (event: any) => void) { handlers[`reload:${event}`] = callback; } };
-	const presentation = { ...select, children: [] as any[], value: "", addEventListener(event: string, callback: (event: any) => void) { handlers[`presentation:${event}`] = callback; } };
+	const presentation = { ...select, children: [] as any[], value: "", shadowRoot: undefined as any,
+		addEventListener(event: string, callback: (event: any) => void) { handlers[`presentation:${event}`] = callback; } };
 	const name = { value: "", addEventListener(event: string, callback: (event: any) => void) { handlers[`name:${event}`] = callback; } };
 	const status = { textContent: "" };
 	const messages: any[] = [];
 	const listeners: Record<string, (message: any) => void> = {};
 	const client = {
 		getSettings: async () => ({ settings: saved }),
-		send: async (_event: string, payload: any) => { messages.push(payload); },
+		send: async (_event: string, payload: any) => { messages.push(payload); await sendImpl?.(payload); },
 		sendToPropertyInspector: { subscribe: (fn: any) => { listeners.reply = fn; } },
 		didReceiveGlobalSettings: { subscribe: (fn: any) => { listeners.global = fn; } },
 		didReceiveSettings: { subscribe: (fn: any) => { listeners.settings = fn; } },
@@ -191,4 +192,94 @@ test("reopened inspectors restore their own presentation and reject stale catalo
 		assert.equal(view.presentation.value, expected);
 		assert.equal(view.messages.some(message => message.event === "selectPresentation"), false);
 	}
+});
+
+test("sdpi-select input reads the newly selected native value before the host property updates", async () => {
+	const view = inspector({ connectionId: "a", presentation: "double-ring" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "double-ring" } } });
+	const request = view.messages.find(message => message.event === "loadPresentations").requestId;
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: request, presentations: [
+		{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" },
+	] } });
+	// The real component emits input from its shadow <select> while the host still has its old value.
+	view.presentation.shadowRoot = { querySelector: () => ({ value: "text" }) };
+	assert.equal(view.presentation.value, "double-ring");
+	view.handlers["presentation:input"]({ target: view.presentation });
+	await flush();
+	assert.deepEqual(view.messages.filter(message => message.event === "selectPresentation").map(message => message.presentation), ["text"]);
+	view.presentation.value = "text";
+	view.handlers["presentation:change"]({ target: view.presentation });
+	assert.equal(view.messages.filter(message => message.event === "selectPresentation").length, 1);
+	view.presentation.shadowRoot = { querySelector: () => ({ value: "double-ring" }) };
+	view.handlers["presentation:input"]({ target: view.presentation });
+	await flush();
+	assert.deepEqual(view.messages.filter(message => message.event === "selectPresentation").map(message => message.presentation), ["text", "double-ring"]);
+});
+
+test("failed selection restores confirmed view; stale acknowledgement cannot override a newer edit", async () => {
+	let fail = true;
+	const view = inspector({ connectionId: "a", presentation: "double-ring" }, async payload => {
+		if (payload.event === "selectPresentation" && fail) throw new Error("write failed");
+	});
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "double-ring" } } });
+	const request = view.messages.find(message => message.event === "loadPresentations").requestId;
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: request, presentations: [
+		{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" },
+	] } });
+	view.presentation.value = "text";
+	await view.handlers["presentation:input"]({ target: view.presentation });
+	await flush();
+	assert.equal(view.presentation.value, "double-ring");
+	fail = false;
+	view.presentation.value = "text";
+	await view.handlers["presentation:input"]({ target: view.presentation });
+	const first = view.messages.filter(message => message.event === "selectPresentation")[0];
+	const latest = view.messages.filter(message => message.event === "selectPresentation")[1];
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: first.requestId, presentation: "text", saved: false } });
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: latest.requestId, presentation: "text", saved: true } });
+	assert.equal(view.presentation.value, "text");
+});
+
+test("delayed settings and catalog replies do not override the pending selection", async () => {
+	const view = inspector({ connectionId: "a", presentation: "double-ring" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "double-ring" } } });
+	const catalogRequest = view.messages.find(message => message.event === "loadPresentations").requestId;
+	const catalog = [{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" }];
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: catalogRequest, presentations: catalog } });
+	view.presentation.value = "text";
+	await view.handlers["presentation:input"]({ target: view.presentation });
+	const request = view.messages.filter(message => message.event === "selectPresentation").at(-1);
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "double-ring" } } });
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: "old", presentations: catalog } });
+	assert.equal(view.presentation.value, "text");
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: request.requestId, presentation: "text", saved: true } });
+	assert.equal(view.presentation.value, "text");
+	const reopened = inspector({ connectionId: "a", presentation: "text" });
+	await flush();
+	reopened.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "text" } } });
+	reopened.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded",
+		requestId: reopened.messages.find(message => message.event === "loadPresentations").requestId, presentations: catalog } });
+	assert.equal(reopened.presentation.value, "text");
+});
+
+test("rapid edits do not let an older acknowledgement undo the latest choice", async () => {
+	const view = inspector({ presentation: "double-ring" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { presentation: "double-ring" } } });
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded",
+		requestId: view.messages.find(message => message.event === "loadPresentations").requestId,
+		presentations: [{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" }] } });
+	view.presentation.shadowRoot = { querySelector: () => ({ value: "text" }) };
+	await view.handlers["presentation:input"]({ target: view.presentation });
+	view.presentation.shadowRoot = { querySelector: () => ({ value: "double-ring" }) };
+	await view.handlers["presentation:input"]({ target: view.presentation });
+	const writes = view.messages.filter(message => message.event === "selectPresentation");
+	assert.deepEqual(writes.map(message => message.presentation), ["text", "double-ring"]);
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: writes[0].requestId, presentation: "text", saved: true } });
+	assert.equal(view.presentation.value, "double-ring");
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationSaved", requestId: writes[1].requestId, presentation: "double-ring", saved: true } });
+	assert.equal(view.presentation.value, "double-ring");
 });
