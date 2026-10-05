@@ -22,19 +22,19 @@ Each Quota key SHALL render only the snapshot matching its saved `connectionId`,
 - **THEN** that key updates using the current shared state without an additional quota request or changing another key
 
 ### Requirement: Display generic quota windows compactly
-The key SHALL render a readable combined 72×72 layout with up to two quota windows in its selected presentation. Window keys SHALL be selected in lexicographic Unicode code-point order independent of response ordering; the first selected window SHALL occupy the first text row or outer ring and the second SHALL occupy the second text row or inner ring. Each displayed window SHALL identify the quota key and show the normalized remaining percentage rounded to the nearest integer, `∞` for unlimited, or `?` for unknown. Zero SHALL remain `0%`, not an error or unknown value. If more than two windows exist, an overflow indicator SHALL reveal the number of omitted windows. Labels and the display name SHALL be deterministically shortened to fit without hiding quota values. The text presentation SHALL preserve its existing layout when no custom name is configured.
+The key SHALL render a readable combined 72×72 layout with up to two quota windows in its selected presentation. Window keys SHALL be selected in lexicographic Unicode code-point order independent of response ordering; the first selected window SHALL occupy the first text row or outer ring and the second SHALL occupy the second text row or inner ring. The text presentation SHALL identify each displayed window and show its normalized remaining percentage rounded to the nearest integer, `∞` for unlimited, or `?` for unknown. In the double-ring presentation, identification SHALL remain possible without relying on color alone; the bottom row of numeric percentages SHALL NOT be shown, and remaining limited quota SHALL instead be visualized by ring fill. Zero SHALL remain zero progress, not an error or unknown value. If more than two windows exist, an overflow indicator SHALL reveal the number of omitted windows. Labels and the display name SHALL be deterministically shortened to fit without hiding the text presentation's quota values or the ring presentation's status. The text presentation SHALL preserve its existing layout when no custom name is configured.
 
 #### Scenario: Codex session and weekly values
 - **WHEN** an assigned snapshot has `session` remaining 84 percent and `weekly` remaining 76 percent
-- **THEN** both selected presentations show the effective display name and both windows with `84%` and `76%`
+- **THEN** both presentations show the effective display name, the text presentation shows `84%` and `76%`, and the double-ring presentation shows corresponding outer and inner fills without a bottom percentage row
 
 #### Scenario: Non-Codex windows and overflow
 - **WHEN** a provider supplies three arbitrary quota-window keys
-- **THEN** either presentation displays the lexicographically first two keys and an indicator that one further window exists
+- **THEN** either presentation displays the lexicographically first two windows and an indicator that one further window exists
 
 #### Scenario: Unlimited, unknown and exhausted
 - **WHEN** a rendered window is unlimited, unknown or exhausted
-- **THEN** its value is respectively `∞`, `?` or `0%`, without a fabricated percentage
+- **THEN** text shows respectively `∞`, `?` or `0%`, while double-ring shows distinct nonnumeric special states or an empty progress arc respectively, without a fabricated percentage
 
 ### Requirement: Make configuration and data failures visible
 The key SHALL distinguish unassigned action, missing/invalid shared configuration, initial loading, missing selected connection after a successful snapshot, unknown quota for a connection without windows, authentication failure, unavailable OmniRoute and invalid response. A service error SHALL NOT be mislabeled as a missing connection or exhausted quota. No credentials or raw server errors SHALL appear on the key.
@@ -113,19 +113,19 @@ The Quota Property Inspector SHALL provide an editable name field for the key. W
 - **THEN** delayed metadata does not overwrite the user's edit and the text is treated as plain text in the inspector and key image
 
 ### Requirement: Visualize remaining quotas as concentric rings
-The double-ring presentation SHALL show both selected windows on one key as concentric progress rings, with the effective display name in the center. For `session` and `weekly`, session SHALL be outer and weekly inner. Limited windows SHALL fill clockwise from twelve o'clock in proportion to their normalized remaining percentage, with a visible neutral background track; zero SHALL have no progress arc and 100 percent SHALL form a complete progress ring. The two windows SHALL have distinct, consistent visual styling and readable key/value labels so identification does not rely on color alone. Numeric ring fill SHALL use the normalized value, while its text uses nearest-integer rounding. Unlimited and unknown windows SHALL show `∞` and `?` respectively with distinct nonnumeric styling rather than fabricated numeric fill. A single window SHALL use only the outer ring, without inventing a second value. No-window, loading, configuration and error states SHALL remain explicit without invented arcs. Cached quota rings SHALL retain the existing visible stale marker and error-category indicator until recovery; optional plan and overflow information SHALL remain readable without obscuring values.
+The double-ring presentation SHALL show both selected windows on one 72×72 key as concentric progress rings spanning nearly the full usable key area without clipping, with the effective display name in the center. For `session` and `weekly`, session SHALL be outer and weekly inner. Limited windows SHALL fill clockwise from twelve o'clock in proportion to their normalized remaining percentage, with a visible neutral background track; zero SHALL have no progress arc and 100 percent SHALL form a complete progress ring. The two windows SHALL have distinct, consistent visual styling and remain identifiable by outer/inner position and concise nonnumeric window labels, without relying on color alone. The bottom row of numeric window values SHALL be omitted in this presentation. Unlimited and unknown windows SHALL have distinct nonnumeric indicators rather than fabricated numeric fill. A single window SHALL use only the outer ring, without inventing a second value. No-window, loading, configuration and error states SHALL remain explicit without invented arcs. Cached quota rings SHALL retain a visible stale marker and error-category indicator until recovery; optional plan and overflow information SHALL remain readable without covering the rings or obscuring the state.
 
 #### Scenario: Two remaining quotas
 - **WHEN** double-ring is selected for session remaining 84 percent and weekly remaining 76 percent
-- **THEN** the outer ring is 84 percent filled, the inner ring is 76 percent filled, the name appears centrally, and `S 84%` and `W 76%` are readable and attributable
+- **THEN** the outer ring is 84 percent filled, the inner ring is 76 percent filled, the name appears centrally, both windows can be identified without relying on color alone, and no `S 84%` or `W 76%` bottom row appears
 
 #### Scenario: Zero, full and fractional quota
 - **WHEN** a limited window has remaining percentage 0, 100 or 12.5
-- **THEN** its ring has respectively no progress arc, a complete progress ring or 12.5 percent fill, with text `0%`, `100%` or `13%`
+- **THEN** its ring has respectively no progress arc, a complete progress ring or 12.5 percent fill, without numeric percentage text in the double-ring presentation
 
 #### Scenario: One window or special values
 - **WHEN** a snapshot has only one window, or selected windows are unlimited or unknown
-- **THEN** a sole window appears as the outer ring and special values use their nonnumeric indicators without a fabricated second value or percentage
+- **THEN** a sole window appears as the outer ring and special values remain identifiable through distinct nonnumeric indicators without a fabricated second value or percentage
 
 #### Scenario: Stale rings and recovery
 - **WHEN** a transient outage retains an assigned snapshot and a later refresh succeeds
