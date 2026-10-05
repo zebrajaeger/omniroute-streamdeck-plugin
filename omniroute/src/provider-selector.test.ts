@@ -14,6 +14,8 @@ function inspector(saved: Record<string, unknown> = {}) {
 		addEventListener(event: string, callback: (event: any) => void) { handlers[`select:${event}`] = callback; },
 	};
 	const reload = { addEventListener(event: string, callback: (event: any) => void) { handlers[`reload:${event}`] = callback; } };
+	const presentation = { ...select, children: [] as any[], value: "", addEventListener(event: string, callback: (event: any) => void) { handlers[`presentation:${event}`] = callback; } };
+	const name = { value: "", addEventListener(event: string, callback: (event: any) => void) { handlers[`name:${event}`] = callback; } };
 	const status = { textContent: "" };
 	const messages: any[] = [];
 	const listeners: Record<string, (message: any) => void> = {};
@@ -25,11 +27,11 @@ function inspector(saved: Record<string, unknown> = {}) {
 		didReceiveSettings: { subscribe: (fn: any) => { listeners.settings = fn; } },
 	};
 	const document = {
-		querySelector: (selector: string) => selector === "#provider-connection" ? select : selector === "#provider-status" ? status : reload,
+		querySelector: (selector: string) => selector === "#provider-connection" ? select : selector === "#provider-status" ? status : selector === "#quota-presentation" ? presentation : selector === "#quota-display-name" ? name : reload,
 		createElement: (_tag: string) => ({ value: "", textContent: "", disabled: false }),
 	};
 	vm.runInNewContext(script, { document, SDPIComponents: { streamDeckClient: client }, Date });
-	return { select, status, messages, listeners, handlers };
+	return { select, presentation, name, status, messages, listeners, handlers };
 }
 
 async function flush() { await new Promise(resolve => setTimeout(resolve, 0)); }
@@ -41,8 +43,8 @@ test("DOM uses official selector/button, safe text labels and preserves modal co
 	const view = inspector();
 	await flush();
 	view.listeners.settings({ context: "key-a", payload: { settings: {} } });
-	assert.equal(view.messages[0].event, "loadProviderConnections");
-	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: view.messages[0].requestId,
+	assert.equal(view.messages.find(message => message.event === "loadProviderConnections")?.event, "loadProviderConnections");
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: view.messages.find(message => message.event === "loadProviderConnections").requestId,
 		status: "ready", connections: [{ connectionId: "id-1", provider: "codex", name: "<script>unsafe</script>" },
 			{ connectionId: "id-2", provider: "codex", name: "<script>unsafe</script>" }] } });
 	assert.deepEqual(view.select.children.map(option => option.value), ["", "id-1", "id-2"]);
@@ -61,7 +63,7 @@ test("saved missing ID, loading, empty, authentication and old replies preserve 
 	const view = inspector({ connectionId: "missing" });
 	await flush();
 	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "missing" } } });
-	const firstId = view.messages[0].requestId;
+	const firstId = view.messages.find(message => message.event === "loadProviderConnections").requestId;
 	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: firstId, status: "empty", connections: [] } });
 	assert.equal(view.select.value, "missing");
 	assert.match(view.status.textContent, /unavailable/i);
@@ -100,4 +102,93 @@ test("global settings and invalidation refresh open inspector without applying o
 	assert.equal(view.select.value, "saved");
 	assert.equal(view.select.disabled, false);
 	assert.ok(!view.status.textContent.includes("not-rendered"));
+});
+
+test("catalog options, unknown saved ID and automatic provider name never auto-save", async () => {
+	const view = inspector({ connectionId: "a", presentation: "future" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "future" } } });
+	const request = view.messages.find(message => message.event === "loadPresentations").requestId;
+	view.listeners.reply({ context: "other", payload: { event: "presentationsLoaded", requestId: request, presentations: [{ id: "wrong", label: "Wrong" }] } });
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: request, presentations: [
+		{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" }, { id: "third", label: "Third" },
+	] } });
+	assert.equal(view.presentation.value, "text");
+	assert.deepEqual(view.presentation.children.map(item => item.value), ["text", "double-ring", "third"]);
+	const discovery = view.messages.find(message => message.event === "loadProviderConnections");
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: discovery.requestId, status: "ready", connections: [
+		{ connectionId: "a", provider: "codex", name: "Account" }, { connectionId: "b", provider: "other" },
+	] } });
+	assert.equal(view.name.value, "codex");
+	assert.equal(view.messages.some(message => message.event === "setDisplayName" || message.event === "selectPresentation"), false);
+	view.name.value = "<Work>";
+	await view.handlers["name:change"]({});
+	assert.equal(view.messages.at(-1).displayName, "<Work>");
+	view.select.value = "b";
+	await view.handlers["select:change"]({});
+	assert.equal(view.name.value, "<Work>");
+	view.name.value = "  ";
+	await view.handlers["name:change"]({});
+	assert.equal(view.messages.at(-1).displayName, "");
+	assert.equal(view.name.value, "other");
+	view.presentation.value = "third";
+	await view.handlers["presentation:change"]({});
+	assert.equal(view.messages.at(-1).presentation, "third");
+});
+
+test("pending edits survive delayed settings and discovery; automatic names follow confirmed connection", async () => {
+	const view = inspector({ connectionId: "a" });
+	await flush();
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a" } } });
+	assert.equal(view.name.value, "");
+	const catalogRequest = view.messages.find(message => message.event === "loadPresentations").requestId;
+	view.listeners.reply({ context: "key-a", payload: { event: "presentationsLoaded", requestId: catalogRequest, presentations: [
+		{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" },
+	] } });
+	view.name.value = "Custom";
+	await view.handlers["name:change"]({});
+	view.presentation.value = "double-ring";
+	await view.handlers["presentation:change"]({});
+	view.listeners.settings({ context: "key-b", payload: { settings: { connectionId: "b", displayName: "Wrong" } } });
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a" } } });
+	assert.equal(view.name.value, "Custom");
+	assert.equal(view.presentation.value, "double-ring");
+	const id = view.messages.find(message => message.event === "loadProviderConnections").requestId;
+	view.listeners.reply({ context: "key-a", payload: { event: "providerConnectionsLoaded", requestId: id, status: "ready", connections: [
+		{ connectionId: "a", provider: "Alpha" }, { connectionId: "b", provider: "Beta" },
+	] } });
+	assert.equal(view.name.value, "Custom");
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "a", presentation: "double-ring", displayName: "Custom" } } });
+	view.select.value = "b";
+	await view.handlers["select:change"]({});
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "b", presentation: "double-ring", displayName: "Custom" } } });
+	assert.equal(view.name.value, "Custom");
+	view.name.value = " \t ";
+	await view.handlers["name:change"]({});
+	assert.equal(view.name.value, "Beta");
+	view.listeners.settings({ context: "key-a", payload: { settings: { connectionId: "b", presentation: "double-ring" } } });
+	assert.equal(view.name.value, "Beta");
+	view.select.value = "a";
+	await view.handlers["select:change"]({});
+	assert.equal(view.name.value, "Alpha");
+});
+
+test("reopened inspectors restore their own presentation and reject stale catalog replies", async () => {
+	for (const [context, saved, expected] of [
+		["key-a", { connectionId: "a", presentation: "double-ring" }, "double-ring"],
+		["key-b", { connectionId: "b" }, "text"],
+	] as const) {
+		const view = inspector(saved);
+		await flush();
+		view.listeners.settings({ context, payload: { settings: saved } });
+		const request = view.messages.find(message => message.event === "loadPresentations").requestId;
+		view.listeners.reply({ context, payload: { event: "presentationsLoaded", requestId: "older", presentations: [{ id: "bad", label: "Bad" }] } });
+		assert.equal(view.presentation.disabled, true);
+		view.listeners.reply({ context, payload: { event: "presentationsLoaded", requestId: request, presentations: [
+			{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" },
+		] } });
+		assert.equal(view.presentation.disabled, false);
+		assert.equal(view.presentation.value, expected);
+		assert.equal(view.messages.some(message => message.event === "selectPresentation"), false);
+	}
 });

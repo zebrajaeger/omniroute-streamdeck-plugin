@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseSnapshot } from "./quota-model";
 import { quotaImage, quotaRenderModel, quotaSvg } from "./quota-renderer";
+import { presentationOptions, resolvePresentation, presentations } from "./quota-display/catalog";
 import type { QuotaState, QuotaStatus } from "./quota-service";
 
 const snapshot = parseSnapshot({ providers: [
@@ -15,8 +16,8 @@ test("assigned accounts never mix values; provider and optional plan form the he
 	const a = quotaRenderModel(ready, "a");
 	assert.equal(a.heading, "codex");
 	assert.equal(a.plan, "pro");
-	assert.deepEqual(a.rows, [{ label: "S", value: "84%" }, { label: "W", value: "76%" }]);
-	assert.deepEqual(quotaRenderModel(ready, "b").rows, [{ label: "S", value: "13%" }]);
+	assert.deepEqual(a.rows, [{ key: "session", label: "S", value: "84%", percentage: { kind: "limited", value: 84 } }, { key: "weekly", label: "W", value: "76%", percentage: { kind: "limited", value: 76 } }]);
+	assert.deepEqual(quotaRenderModel(ready, "b").rows, [{ key: "session", label: "S", value: "13%", percentage: { kind: "limited", value: 12.5 } }]);
 	assert.equal(quotaRenderModel(ready, "b").plan, "");
 	assert.deepEqual(quotaRenderModel(ready, "missing").message, ["Verbindung", "fehlt"]);
 	assert.deepEqual(quotaRenderModel(ready, "empty").message, ["Quota ?"]);
@@ -27,7 +28,7 @@ test("generic windows are codepoint sorted, shortened uniquely, rounded and coun
 		z: {}, abcdef2: { unlimited: true, remainingPercentage: 20 }, abcdef1: { remainingPercentage: 0 },
 	} }] }) };
 	const model = quotaRenderModel(state, "a");
-	assert.deepEqual(model.rows, [{ label: "abc…1", value: "0%" }, { label: "abc…2", value: "∞" }]);
+	assert.deepEqual(model.rows, [{ key: "abcdef1", label: "abc…1", value: "0%", percentage: { kind: "limited", value: 0 } }, { key: "abcdef2", label: "abc…2", value: "∞", percentage: { kind: "unlimited" } }]);
 	assert.equal(model.footer, "+1");
 	const unicode: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "generic", quotas: {
 		"𐀀": {}, "\ue000": {}, a: {},
@@ -63,8 +64,70 @@ test("72x72 SVG reserves values, escapes XML and produces an exact data URL", ()
 	const svg = quotaSvg(model);
 	assert.equal(svg, '<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72"><rect width="72" height="72" rx="6" fill="#111827"/><g fill="#f9fafb" font-family="Arial, sans-serif"><text x="36" y="13" font-size="10" text-anchor="middle" textLength="32.5" lengthAdjust="spacingAndGlyphs">codex</text><text x="36" y="24" font-size="8" text-anchor="middle" textLength="15.600000000000001" lengthAdjust="spacingAndGlyphs">pro</text><text x="4" y="39" font-size="9" text-anchor="start" textLength="5.8500000000000005" lengthAdjust="spacingAndGlyphs">S</text><text x="68" y="39" font-size="14" text-anchor="end" textLength="27.3" lengthAdjust="spacingAndGlyphs">84%</text><text x="4" y="56" font-size="9" text-anchor="start" textLength="5.8500000000000005" lengthAdjust="spacingAndGlyphs">W</text><text x="68" y="56" font-size="14" text-anchor="end" textLength="27.3" lengthAdjust="spacingAndGlyphs">76%</text><g fill="#cbd5e1"></g></g></svg>');
 	assert.equal(Buffer.from(quotaImage(ready, "a").split(",")[1]!, "base64").toString(), svg);
-	const unsafe = quotaSvg({ ...model, heading: '<&>"\'', plan: "\ud800\u0000", rows: [{ label: "</text><script>", value: "100%" }] });
+	const unsafe = quotaSvg({ ...model, heading: '<&>"\'', plan: "\ud800\u0000", rows: [{ key: "unsafe", label: "</text><script>", value: "100%", percentage: { kind: "limited", value: 100 } }] });
 	assert.match(unsafe, /&lt;&amp;&gt;&quot;&apos;/);
 	assert.doesNotMatch(unsafe, /<script>|\ud800|\u0000/);
 	assert.match(unsafe, /x="68"[^>]+textLength="34"[^>]*>100%/);
+});
+
+test("catalog dispatch, fallback and automatic/custom naming", () => {
+	for (const id of [undefined, null, 2, {}, "missing"]) assert.equal(resolvePresentation(id).id, "text");
+	assert.deepEqual(presentationOptions().map(item => item.id), ["text", "double-ring"]);
+	const extra = { id: "extra", label: "Extra", render: () => "extra" };
+	assert.equal(resolvePresentation("extra", [...presentations, extra]).render(quotaRenderModel(ready, "a")), "extra");
+	assert.equal(presentationOptions([...presentations, extra]).at(-1)?.label, "Extra");
+	assert.equal(quotaSvg(quotaRenderModel(ready, "a")), quotaSvg(quotaRenderModel(ready, "a", "  ")));
+	const model = quotaRenderModel(ready, "a", "  Work <&>  ");
+	assert.equal(model.displayName, "Work <&>");
+	assert.equal(model.providerName, "codex");
+	assert.match(quotaSvg(model), /Work &lt;&amp;&gt;/);
+	assert.equal(quotaRenderModel(ready, "a", "abcdefghijkl🚀xyz").heading, "abcdefghij…");
+});
+
+test("double ring uses typed fractions and preserves all special/status states", () => {
+	const render = (state: QuotaState, id = "a") => Buffer.from(quotaImage(state, id, "double-ring").split(",")[1]!, "base64").toString();
+	const image = render(ready);
+	assert.match(image, /width="72" height="72"/);
+	assert.match(image, /S 84%/);
+	assert.match(image, /W 76%/);
+	assert.match(image, /rotate\(-90 36 29\)/);
+	assert.match(image, /stroke="#38bdf8"/);
+	assert.match(image, /stroke="#a78bfa"/);
+	assert.match(image, /<text[^>]*>codex<\/text>.*<text[^>]*>pro<\/text>/);
+	const circles = [...image.matchAll(/<circle[^>]*>/g)].map(match => match[0]);
+	assert.match(circles[1]!, /r="26".*stroke="#38bdf8".*stroke-dasharray="[\d.]+ [\d.]+".*rotate\(-90 36 29\)/);
+	assert.match(circles[3]!, /r="19".*stroke="#a78bfa".*rotate\(-90 36 29\)/);
+	const outer = circles[1]!.match(/stroke-dasharray="([\d.]+) ([\d.]+)"/)!;
+	const inner = circles[3]!.match(/stroke-dasharray="([\d.]+) ([\d.]+)"/)!;
+	assert.ok(Math.abs(Number(outer[1]) / Number(outer[2]) - 0.84) < 1e-12);
+	assert.ok(Math.abs(Number(inner[1]) / Number(inner[2]) - 0.76) < 1e-12);
+	assert.equal((render(ready, "b").match(/stroke="#475569"/g) ?? []).length, 1);
+	const fraction: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "<test>", quotas: {
+		a: { remainingPercentage: 0 }, b: { remainingPercentage: 12.5 }, c: { remainingPercentage: 100 },
+	} }] }) };
+	assert.match(render(fraction), /a 0%/);
+	assert.match(render(fraction), /b 13%/);
+	assert.equal((render(fraction).match(/rotate\(-90 36 29\)/g) ?? []).length, 1);
+	const partial = render(fraction).match(/r="19"[^>]*stroke="#a78bfa"[^>]*stroke-dasharray="([\d.]+) ([\d.]+)"/)!;
+	assert.ok(Math.abs(Number(partial[1]) / Number(partial[2]) - 0.125) < 1e-12);
+	assert.match(render(fraction), /\+1/);
+	assert.doesNotMatch(render(fraction), /<test>/);
+	const full: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "P", quotas: { session: { remainingPercentage: 100 } } }] }) };
+	assert.match(render(full), /S 100%/);
+	assert.match(render(full), /stroke="#38bdf8"[^>]*transform="rotate\(-90 36 29\)"/);
+	assert.doesNotMatch(render(full), /stroke="#38bdf8"[^>]*stroke-dasharray/);
+	const special: QuotaState = { status: "ready", stale: false, snapshot: parseSnapshot({ providers: [{ connectionId: "a", provider: "P", quotas: { a: { unlimited: true }, b: {} } }] }) };
+	assert.match(render(special), /a ∞/);
+	assert.match(render(special), /b \?/);
+	assert.doesNotMatch(render(special), /rotate\(-90/);
+	assert.match(render(special), /stroke-dasharray="1 3"/);
+	assert.match(render(special), /stroke-dasharray="3 4"/);
+	assert.doesNotMatch(render(ready, "empty"), /<circle/);
+	for (const status of ["unconfigured", "invalid-configuration", "loading", "authentication", "unavailable", "http", "invalid-response"] as QuotaStatus[]) {
+		const output = render({ status, stale: false });
+		assert.doesNotMatch(output, /<circle/);
+		assert.match(output, /<text/);
+	}
+	assert.match(render({ status: "unavailable", error: "unavailable", stale: true, snapshot }), /Alt Offline/);
+	assert.doesNotMatch(render(ready), /Alt Offline/);
 });

@@ -4,6 +4,8 @@ import streamDeck from "@elgato/streamdeck";
 import { QuotaAction } from "./quota";
 import { ProviderRegistry } from "../provider-registry";
 import { mergeConnectionId, providerLabel } from "../provider-selection";
+import { parseSnapshot } from "../quota-model";
+import { quotaImage } from "../quota-renderer";
 
 test("action settings merge and clear only the selected ID; labels identify even nameless accounts", () => {
 	const first = mergeConnectionId({ existing: true }, "account-1");
@@ -78,6 +80,97 @@ test("each action persists only its own explicit selection and preserves other s
 		await action.onSendToPlugin({ action: b, payload: { event: "selectProviderConnection", connectionId: "" } } as any);
 		assert.deepEqual(b.saved(), { other: "b" });
 		assert.deepEqual(a.saved(), { other: "a", connectionId: "one" });
+	} finally {
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});
+
+test("mixed settings writes serialize, preserve unrelated fields and reject unsupported IDs", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	const originalSend = streamDeck.ui.sendToPropertyInspector;
+	let settings: any = { untouched: 9, presentation: "future" };
+	const key = { id: "key", getSettings: async () => settings, setSettings: async (next: any) => { await Promise.resolve(); settings = next; } };
+	const action = new QuotaAction();
+	try {
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => key });
+		const sent: any[] = [];
+		streamDeck.ui.sendToPropertyInspector = async payload => { sent.push(payload); };
+		action.onPropertyInspectorDidAppear({ action: key } as any);
+		const send = (payload: any) => action.onSendToPlugin({ action: key, payload } as any);
+		await send({ event: "loadPresentations", requestId: "catalog" });
+		assert.deepEqual(sent[0], { event: "presentationsLoaded", requestId: "catalog", presentations: [{ id: "text", label: "Text" }, { id: "double-ring", label: "Double ring" }] });
+		await Promise.all([
+			send({ event: "selectProviderConnection", connectionId: "one" }),
+			send({ event: "selectPresentation", presentation: "double-ring" }),
+			send({ event: "setDisplayName", displayName: "  Work  " }),
+		]);
+		assert.deepEqual(settings, { untouched: 9, connectionId: "one", presentation: "double-ring", displayName: "Work" });
+		await send({ event: "selectPresentation", presentation: "future" });
+		assert.equal(settings.presentation, "double-ring");
+		await send({ event: "setDisplayName", displayName: "   " });
+		assert.deepEqual(settings, { untouched: 9, connectionId: "one", presentation: "double-ring" });
+		action.onPropertyInspectorDidDisappear({ action: key } as any);
+		await send({ event: "selectPresentation", presentation: "text" });
+		assert.equal(settings.presentation, "double-ring");
+	} finally {
+		streamDeck.ui.sendToPropertyInspector = originalSend;
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});
+
+test("writes queued by a closed inspector visit are discarded without affecting the next visit", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	let current: any;
+	let release!: () => void;
+	const wait = new Promise<void>(resolve => { release = resolve; });
+	let reads = 0;
+	let settings: any = { untouched: true };
+	const key = { id: "key", getSettings: async () => { reads++; await wait; return settings; }, setSettings: async (next: any) => { settings = next; } };
+	const action = new QuotaAction();
+	try {
+		current = key;
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => current });
+		action.onPropertyInspectorDidAppear({ action: key } as any);
+		const send = (payload: any, target = key) => action.onSendToPlugin({ action: target, payload } as any);
+		const first = send({ event: "selectPresentation", presentation: "double-ring" });
+		await Promise.resolve(); await Promise.resolve();
+		const queued = send({ event: "setDisplayName", displayName: "Old" });
+		const foreign = send({ event: "setDisplayName", displayName: "Wrong" }, { ...key, id: "other" });
+		action.onPropertyInspectorDidDisappear({ action: key } as any);
+		action.onPropertyInspectorDidAppear({ action: key } as any);
+		const next = send({ event: "setDisplayName", displayName: "New" });
+		release();
+		await Promise.all([first, queued, foreign, next]);
+		assert.deepEqual(settings, { untouched: true, displayName: "New" });
+		assert.equal(reads, 2);
+	} finally {
+		release();
+		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
+		else delete (streamDeck.ui as any).action;
+	}
+});
+
+test("saving a presentation redraws a visible key even without a settings echo", async () => {
+	const originalAction = Object.getOwnPropertyDescriptor(streamDeck.ui, "action");
+	const state = { status: "ready" as const, stale: false, snapshot: parseSnapshot({ providers: [
+		{ connectionId: "a", provider: "codex", quotas: { session: { remainingPercentage: 84 } } },
+	] }) };
+	const images: string[] = [];
+	let saved: any = { connectionId: "a" };
+	const key = { id: "visible", isKey: () => true,
+		getSettings: async () => saved, setSettings: async (next: any) => { saved = next; },
+		setTitle: async () => {}, setImage: async (image: string) => { images.push(image); } };
+	const action = new QuotaAction(undefined, { getState: () => state, subscribe: () => () => {} });
+	try {
+		Object.defineProperty(streamDeck.ui, "action", { configurable: true, get: () => key });
+		action.onWillAppear({ action: key, payload: { settings: saved } } as any);
+		action.onPropertyInspectorDidAppear({ action: key } as any);
+		await action.onSendToPlugin({ action: key, payload: { event: "selectPresentation", presentation: "double-ring" } } as any);
+		await new Promise(resolve => setImmediate(resolve));
+		assert.equal(saved.presentation, "double-ring");
+		assert.equal(images.at(-1), quotaImage(state, "a", "double-ring"));
 	} finally {
 		if (originalAction) Object.defineProperty(streamDeck.ui, "action", originalAction);
 		else delete (streamDeck.ui as any).action;

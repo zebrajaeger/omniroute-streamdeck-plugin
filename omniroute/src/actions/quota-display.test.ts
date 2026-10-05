@@ -147,3 +147,46 @@ test("shared service stale, recovery and instance switch clear old values withou
 	assert.equal(b.images.at(-1), quotaImage(service.getState(), "b"));
 	service.stop();
 });
+
+test("presentation and name update independently from shared state during slow writes", async () => {
+	const service = source();
+	const action = new QuotaAction(undefined, service);
+	const a = key("a"), b = key("b");
+	const wait = deferred();
+	a.setTitle = () => wait.promise;
+	appear(action, a, "a"); appear(action, b, "b");
+	action.onDidReceiveSettings({ action: a, payload: { settings: { connectionId: "a", presentation: "double-ring" } } } as any);
+	action.onDidReceiveSettings({ action: a, payload: { settings: { connectionId: "a", presentation: "double-ring", displayName: "Work" } } } as any);
+	wait.resolve(); await flush();
+	assert.deepEqual(a.images, [quotaImage(service.getState(), "a", "double-ring", "Work")]);
+	assert.equal(b.images.at(-1), quotaImage(service.getState(), "b"));
+	assert.equal(service.listeners.length, 1);
+	disappear(action, a);
+	appear(action, a, "a");
+	await flush();
+	assert.equal(a.images.at(-1), quotaImage(service.getState(), "a"));
+});
+
+test("double rings keep stale error and overflow then clear cached data on recovery and instance change", async () => {
+	const quotas = (session: number) => parseSnapshot({ providers: [{ connectionId: "a", provider: "codex", plan: "pro", quotas: {
+		session: { remainingPercentage: session }, weekly: { remainingPercentage: 76 }, z: {},
+	} }] });
+	const service = source({ status: "ready", stale: false, snapshot: quotas(84) });
+	const action = new QuotaAction(undefined, service);
+	const a = key("ring");
+	const svg = () => Buffer.from(a.images.at(-1)!.split(",")[1]!, "base64").toString();
+	action.onWillAppear({ action: a, payload: { settings: { connectionId: "a", presentation: "double-ring", displayName: "Work" } } } as any);
+	await flush();
+	assert.match(svg(), /Work.*pro.*S 84%.*W 76%.*\+1/);
+	service.publish({ status: "unavailable", error: "unavailable", stale: true, snapshot: quotas(84) });
+	await flush();
+	assert.match(svg(), /S 84%.*W 76%.*Alt Offline · \+1/);
+	service.publish({ status: "ready", stale: false, snapshot: quotas(32) });
+	await flush();
+	assert.match(svg(), /S 32%/);
+	assert.doesNotMatch(svg(), /84%|Alt Offline/);
+	service.publish({ status: "loading", stale: false });
+	await flush();
+	assert.match(svg(), /Laden/);
+	assert.doesNotMatch(svg(), /<circle|32%|76%|\+1/);
+});

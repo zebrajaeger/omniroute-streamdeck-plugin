@@ -1,7 +1,17 @@
 const client = SDPIComponents.streamDeckClient;
 const selector = document.querySelector("#provider-connection");
 const statusElement = document.querySelector("#provider-status");
+const presentationSelector = document.querySelector("#quota-presentation");
+const nameField = document.querySelector("#quota-display-name");
 let selectedId = "";
+let customName = "";
+let presentation = "text";
+let presentationPending;
+let namePending;
+let names = new Map();
+let catalog = [{ id: "text", label: "Text" }];
+let catalogRequestId;
+let catalogReady = false;
 let requestId;
 let serial = 0;
 let lastConfig;
@@ -22,6 +32,8 @@ function option(value, label, disabled = false) {
 }
 
 function render(status, connections = []) {
+	names = new Map(connections.map(item => [item.connectionId, item.provider]));
+	updateName();
 	selector.replaceChildren(option("", "No connection selected"));
 	const available = status === "ready" || status === "empty";
 	if (available) {
@@ -44,6 +56,17 @@ function render(status, connections = []) {
 		? `Saved connection ${selectedId} is unavailable. Select another or clear it.` : messages[status] || "";
 }
 
+function updateName() {
+	if (namePending !== undefined) return;
+	nameField.value = customName || names.get(selectedId) || "";
+}
+
+function updatePresentation() {
+	presentationSelector.replaceChildren(...catalog.map(item => option(item.id, item.label)));
+	presentationSelector.value = catalog.some(item => item.id === presentation) ? presentation : "text";
+	presentationSelector.disabled = !catalogReady;
+}
+
 async function loadProviderConnections() {
 	const id = `${++serial}-${Date.now()}`;
 	requestId = id;
@@ -58,6 +81,10 @@ async function restoreSelection() {
 	const result = await client.getSettings();
 	if (revision !== viewRevision) return;
 	selectedId = typeof result.settings?.connectionId === "string" ? result.settings.connectionId : "";
+	if (presentationPending === undefined) presentation = typeof result.settings?.presentation === "string" ? result.settings.presentation : "text";
+	if (namePending === undefined) customName = typeof result.settings?.displayName === "string" ? result.settings.displayName.trim() : "";
+	updatePresentation();
+	updateName();
 	render("loading");
 	// getSettings emits didReceiveSettings; its context identifies the current inspector.
 	if (activeContext && !requestId) await loadProviderConnections();
@@ -66,14 +93,38 @@ async function restoreSelection() {
 selector.addEventListener("change", async () => {
 	const id = selector.value;
 	selectedId = id;
+	updateName();
 	selectionPending = id;
 	try { await client.send("sendToPlugin", { event: "selectProviderConnection", connectionId: id }); }
 	catch { selectionPending = undefined; render("unavailable"); }
+});
+presentationSelector.addEventListener("change", async () => {
+	if (!catalogReady || !catalog.some(item => item.id === presentationSelector.value)) return;
+	presentation = presentationSelector.value;
+	presentationPending = presentation;
+	try { await client.send("sendToPlugin", { event: "selectPresentation", presentation }); }
+	catch { presentationPending = undefined; }
+});
+nameField.addEventListener("change", async () => {
+	const value = nameField.value.trim();
+	customName = value;
+	namePending = value;
+	if (!value) nameField.value = names.get(selectedId) || "";
+	try { await client.send("sendToPlugin", { event: "setDisplayName", displayName: value }); }
+	catch { namePending = undefined; }
 });
 document.querySelector("#reload-providers").addEventListener("click", loadProviderConnections);
 client.sendToPropertyInspector.subscribe(message => {
 	if (message.context !== activeContext) return;
 	const payload = message.payload;
+	if (payload?.event === "presentationsLoaded" && payload.requestId === catalogRequestId && Array.isArray(payload.presentations)) {
+		const options = payload.presentations.filter(item => typeof item?.id === "string" && typeof item.label === "string");
+		if (!options.some(item => item.id === "text")) return;
+		catalog = options;
+		catalogReady = true;
+		updatePresentation();
+		return;
+	}
 	if (payload?.event === "providerConnectionsInvalidated") { void loadProviderConnections(); return; }
 	if (payload?.event === "providerConnectionsLoaded" && payload.requestId === requestId) render(payload.status, payload.connections);
 });
@@ -86,12 +137,30 @@ client.didReceiveGlobalSettings.subscribe(message => {
 client.didReceiveSettings.subscribe(message => {
 	if (!activeContext) activeContext = message.context;
 	if (message.context !== activeContext) return;
+	const settings = message.payload.settings || {};
 	if (selectionPending !== undefined) {
-		if (message.payload.settings?.connectionId === selectionPending || (!selectionPending && !message.payload.settings?.connectionId)) selectionPending = undefined;
+		if (settings.connectionId === selectionPending || (!selectionPending && !settings.connectionId)) selectionPending = undefined;
 		else return;
 	}
-	selectedId = typeof message.payload.settings?.connectionId === "string" ? message.payload.settings.connectionId : "";
+	if (!catalogRequestId) {
+		catalogRequestId = `${++serial}-${Date.now()}`;
+		void client.send("sendToPlugin", { event: "loadPresentations", requestId: catalogRequestId });
+	}
+	const nextPresentation = typeof settings.presentation === "string" ? settings.presentation : "text";
+	if (presentationPending === undefined || presentationPending === nextPresentation) {
+		presentationPending = undefined;
+		presentation = nextPresentation;
+		updatePresentation();
+	}
+	const nextName = typeof settings.displayName === "string" ? settings.displayName.trim() : "";
+	if (namePending === undefined || namePending === nextName) {
+		namePending = undefined;
+		customName = nextName;
+		updateName();
+	}
+	selectedId = typeof settings.connectionId === "string" ? settings.connectionId : "";
 	selector.value = selectedId || "";
+	updateName();
 	if (!requestId) void loadProviderConnections();
 });
 void restoreSelection();

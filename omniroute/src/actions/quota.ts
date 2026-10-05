@@ -4,6 +4,8 @@ import { logger } from "../logging";
 import { ProviderRegistry } from "../provider-registry";
 import { mergeConnectionId } from "../provider-selection";
 import { quotaImage } from "../quota-renderer";
+import { presentationOptions } from "../quota-display/catalog";
+import { normalizeDisplayName } from "../quota-display/model";
 import type { QuotaService } from "../quota-service";
 
 interface VisibleKey {
@@ -15,7 +17,10 @@ interface VisibleKey {
 	writing: boolean;
 }
 
-type DiscoveryMessage = { event: "loadProviderConnections"; requestId: string } | { event: "selectProviderConnection"; connectionId: string };
+type DiscoveryMessage = { event: "loadProviderConnections" | "loadPresentations"; requestId: string } |
+	{ event: "selectProviderConnection"; connectionId: string } |
+	{ event: "selectPresentation"; presentation: string } |
+	{ event: "setDisplayName"; displayName: string };
 
 @action({ UUID: "de.lars-brandt.omniroute.quota" })
 export class QuotaAction extends SingletonAction {
@@ -25,6 +30,7 @@ export class QuotaAction extends SingletonAction {
 	private readonly visible = new Map<string, VisibleKey>();
 	// Keep the writer alive across a disappear/reappear with the same context ID.
 	private readonly writers = new Map<string, Promise<void>>();
+	private readonly settingWrites = new Map<string, Promise<void>>();
 	constructor(private readonly registry: ProviderRegistry = new ProviderRegistry(),
 		private readonly service?: Pick<QuotaService, "getState" | "subscribe">) {
 		super();
@@ -52,7 +58,7 @@ export class QuotaAction extends SingletonAction {
 
 	private render(key: VisibleKey): void {
 		if (!this.service) return;
-		const image = quotaImage(this.service.getState(), key.settings.connectionId);
+		const image = quotaImage(this.service.getState(), key.settings.connectionId, key.settings.presentation, key.settings.displayName);
 		if (image === key.pending || (!key.writing && image === key.lastImage)) return;
 		key.pending = image;
 		key.revision++;
@@ -81,6 +87,12 @@ export class QuotaAction extends SingletonAction {
 		}).finally(() => {
 			key.writing = false;
 			if (this.writers.get(id) === write) this.writers.delete(id);
+			// A settings change can queue an image after the loop exits but before this
+			// finalizer runs. Restart the same writer path instead of losing that image.
+			if (this.visible.get(id) === key && key.pending !== undefined) {
+				key.pending = undefined;
+				this.render(key);
+			}
 		});
 		this.writers.set(id, write);
 	}
@@ -110,12 +122,42 @@ export class QuotaAction extends SingletonAction {
 	override async onSendToPlugin(ev: SendToPluginEvent<DiscoveryMessage, JsonObject>): Promise<void> {
 		if (this.activeContext !== ev.action.id || streamDeck.ui.action?.id !== ev.action.id) return;
 		const message = ev.payload;
-		if (message?.event === "selectProviderConnection") {
-			if (typeof message.connectionId !== "string") return;
+		if (message?.event === "loadPresentations") {
+			if (typeof message.requestId !== "string" || !message.requestId) return;
+			await streamDeck.ui.sendToPropertyInspector({ event: "presentationsLoaded", requestId: message.requestId, presentations: [...presentationOptions()] });
+			return;
+		}
+		if (message?.event === "selectProviderConnection" || message?.event === "selectPresentation" || message?.event === "setDisplayName") {
+			if (message.event === "selectProviderConnection" && typeof message.connectionId !== "string") return;
+			if (message.event === "selectPresentation" && (typeof message.presentation !== "string" || !presentationOptions().some(item => item.id === message.presentation))) return;
+			if (message.event === "setDisplayName" && typeof message.displayName !== "string") return;
 			const visit = this.activeVisit;
-			const settings = await ev.action.getSettings();
-			if (this.activeContext !== ev.action.id || streamDeck.ui.action?.id !== ev.action.id || this.activeVisit !== visit) return;
-			await ev.action.setSettings(mergeConnectionId(settings, message.connectionId));
+			const id = ev.action.id;
+			const previous = this.settingWrites.get(id) ?? Promise.resolve();
+			const write = previous.catch(() => {}).then(async () => {
+				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return;
+				const settings = await ev.action.getSettings();
+				if (this.activeContext !== id || streamDeck.ui.action?.id !== id || this.activeVisit !== visit) return;
+				let next: JsonObject;
+				if (message.event === "selectProviderConnection") next = mergeConnectionId(settings, message.connectionId);
+				else if (message.event === "selectPresentation") next = { ...settings, presentation: message.presentation as string };
+				else {
+					next = { ...settings };
+					const name = normalizeDisplayName(message.displayName);
+					if (name) next.displayName = name;
+					else delete next.displayName;
+				}
+				await ev.action.setSettings(next);
+				// Stream Deck does not echo plugin-initiated settings writes via onDidReceiveSettings.
+				// Update the visible key through the existing revision-aware image writer.
+				const key = this.visible.get(id);
+				if (key) {
+					key.settings = next;
+					this.render(key);
+				}
+			});
+			this.settingWrites.set(id, write);
+			try { await write; } finally { if (this.settingWrites.get(id) === write) this.settingWrites.delete(id); }
 			return;
 		}
 		if (message?.event !== "loadProviderConnections" || typeof message.requestId !== "string" || !message.requestId) return;

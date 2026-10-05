@@ -14,4 +14,14 @@ Sensible strukturierte Felder wie `password`, `token`, `accessToken`, `refreshTo
 
 ## Tests
 
-`npm test` führt die isolierten Logging-Tests aus.
+`npm test` führt die Plugin-Tests aus.
+
+## Quota-Tasten
+
+Jede Taste wählt genau eine Provider-Verbindung. Im Property Inspector kann unter „Presentation“ zwischen „Text“ (Standard auch für bestehende Tasten) und „Double ring“ gewählt werden. Die Wahl wird pro Taste im Action-Setting `presentation` gespeichert; unbekannte gespeicherte IDs zeigen Text, ohne das Setting automatisch zu ändern.
+
+Das Feld „Display name“ zeigt ohne Override den Providernamen der ausgewählten Verbindung, sobald Discovery-Daten verfügbar sind. Dieser automatische Name wird **nicht** gespeichert. Ein eigener Name wird als `displayName` pro Taste gespeichert und gilt in beiden Ansichten. Leeren bzw. nur Leerzeichen eingeben setzt den Namen auf den automatischen Providernamen zurück. Ein Verbindungswechsel ändert nur den automatischen Namen, nicht den eigenen.
+
+Im Doppelring ist das lexikografisch erste Quota-Fenster außen und das zweite innen; bei `session`/`weekly` sind dies außen Session und innen Woche. Die farbigen Bögen zeigen verbleibende Prozent, daneben stehen Label und Wert; `∞` und `?` sind keine numerischen Fortschrittswerte. Ein Footer zeigt veraltete Daten/Fehler und weitere Fenster (`+N`). Die Textansicht bleibt ohne eigenen Namen unverändert.
+
+Weitere feste Ansichten: eine reine Funktion `QuotaRenderModel -> SVG` in `src/quota-display/` ergänzen und mit stabiler ID und Label in `src/quota-display/catalog.ts` registrieren. Der Katalog speist sowohl den Dispatcher als auch die Inspector-Optionen. Kein neuer Action-Branch oder zusätzlicher Quota-Request ist nötig.
